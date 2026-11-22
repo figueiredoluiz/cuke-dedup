@@ -2501,3 +2501,67 @@ fn usage_work_budget_shares_suppression_admission_across_rules() {
         }
     }
 }
+
+/// Unused retention is charged only for eligible findings and reports a partial prefix.
+#[test]
+fn retained_output_unused_findings_stop_at_either_limit() {
+    use crate::analysis::tests::ruby_definitions;
+
+    for mut offered in [
+        definitions(
+            "Given('used', () => work()); Given('first', () => work()); Given('second', () => work());",
+        ),
+        ruby_definitions(
+            "Given('used') { work() }; Given('first') { work() }; Given('second') { work() }",
+        ),
+    ] {
+        // Only the second eligible record is expensive.
+        offered[2].location.path = Path::new("longer/path/for").join(&offered[2].location.path);
+        let (_directory, mut config) = config();
+        config
+            .rules
+            .insert(Rule::UnusedDefinition, Severity::Warning);
+        let suppressions = SuppressionIndex::new(&config, &offered);
+        let used = BTreeSet::from([0]);
+
+        let run = |records, bytes| {
+            let mut findings = Vec::new();
+            let incomplete = analyze_unused_with_limits(
+                &offered,
+                &used,
+                &config,
+                &suppressions,
+                &mut findings,
+                MAX_USAGE_SUPPRESSION_WORK,
+                (records, bytes),
+            );
+            (findings, incomplete)
+        };
+        let (complete, status) = run(2, usize::MAX);
+        assert!(status.is_none());
+        assert_eq!(complete.len(), 2);
+        assert_eq!(complete[0].primary, offered[1].location);
+
+        assert_eq!(complete[1].primary, offered[2].location);
+
+        // Count the retained payload from the findings returned by the uncapped run.
+        let retained_bytes = |finding: &Finding| {
+            std::mem::size_of::<Finding>()
+                + finding.message.len()
+                + finding.primary.path.as_os_str().as_encoded_bytes().len()
+                + finding.evidence.matcher_difference.len()
+                + finding.suggested_action.len()
+        };
+        assert!(retained_bytes(&complete[0]) < retained_bytes(&complete[1]));
+        let exact_bytes = complete.iter().map(retained_bytes).sum::<usize>();
+
+        for (records, bytes, count) in [(1, usize::MAX, 1), (2, 0, 0), (2, exact_bytes - 1, 1)] {
+            let (findings, status) = run(records, bytes);
+            assert_eq!(findings, complete[..count]);
+            assert!(status
+                .unwrap()
+                .contains("Unused-definition findings are partial"));
+        }
+        assert_eq!(run(2, exact_bytes), (complete, None));
+    }
+}

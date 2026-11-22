@@ -4,6 +4,8 @@ use super::evidence::definition_semantic_fingerprint;
 use super::fingerprints::relative_path;
 use super::pairs::PairRelationships;
 use crate::model::{Rule, StepDefinition};
+use crate::resource_limits::{LimitedWriter, MAX_ORACLE_OUTPUT_BYTES, MAX_ORACLE_RECORDS};
+use anyhow::bail;
 use serde::Serialize;
 use std::collections::HashMap;
 use std::io::Write;
@@ -24,6 +26,40 @@ pub(crate) struct PairRecord {
     pub(super) matcher_similarity: Option<f64>,
     pub(super) handler_similarity: Option<f64>,
     pub(super) rules: Vec<Rule>,
+}
+
+/// Bounded optional evidence. Each pair has at most four sources and three rules.
+pub(crate) struct PairRecords {
+    records: Vec<PairRecord>,
+    limit: usize,
+    omitted: bool,
+}
+
+impl Default for PairRecords {
+    /// Starts an empty collection with the artifact record allowance.
+    fn default() -> Self {
+        Self::with_limit(MAX_ORACLE_RECORDS)
+    }
+}
+
+impl PairRecords {
+    /// Starts an empty collection with the supplied limit.
+    pub(super) fn with_limit(limit: usize) -> Self {
+        Self {
+            records: Vec::new(),
+            limit,
+            omitted: false,
+        }
+    }
+
+    /// Admits a complete record before allocating its evidence. The verifier keeps running on refusal.
+    pub(super) fn push(&mut self, record: impl FnOnce() -> PairRecord) {
+        if self.records.len() == self.limit {
+            self.omitted = true;
+        } else {
+            self.records.push(record());
+        }
+    }
 }
 
 // Field order is the serialized order and part of the schema contract.
@@ -68,12 +104,30 @@ fn side(definition: &StepDefinition, root: &Path) -> Side {
 /// named once, however many pairs it takes part in.
 pub(crate) fn write_pairs(
     definitions: &[StepDefinition],
-    records: &[PairRecord],
+    records: &PairRecords,
     root: &Path,
     out: &mut dyn Write,
 ) -> anyhow::Result<()> {
+    write_pairs_with_limit(definitions, records, root, out, MAX_ORACLE_OUTPUT_BYTES)
+}
+
+/// Refuses partial evidence and caps serialized bytes, including JSON escaping and newlines.
+pub(super) fn write_pairs_with_limit(
+    definitions: &[StepDefinition],
+    records: &PairRecords,
+    root: &Path,
+    out: &mut dyn Write,
+    max_bytes: usize,
+) -> anyhow::Result<()> {
+    if records.omitted {
+        bail!("pair record limit exceeded ({})", records.limit);
+    }
+    let mut writer = LimitedWriter {
+        inner: out,
+        remaining: max_bytes,
+    };
     let mut sides: HashMap<usize, Side> = HashMap::new();
-    for record in records {
+    for record in &records.records {
         for index in [record.left, record.right] {
             sides
                 .entry(index)
@@ -92,8 +146,8 @@ pub(crate) fn write_pairs(
             handler_similarity: record.handler_similarity,
             rules: &record.rules,
         };
-        serde_json::to_writer(&mut *out, &line)?;
-        out.write_all(b"\n")?;
+        serde_json::to_writer(&mut writer, &line)?;
+        writer.write_all(b"\n")?;
     }
     Ok(())
 }

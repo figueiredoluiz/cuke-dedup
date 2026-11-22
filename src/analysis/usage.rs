@@ -1444,21 +1444,55 @@ fn apply_indirect_usage_with_budget(
 /// Reports `unused-definition` for each definition not in `used`; does nothing when the rule is
 /// off, and skips definitions whose matchers are not global (Jest-Cucumber). A suppression
 /// refusal stops the sweep, returning an incomplete diagnostic and preserving admitted findings.
+#[cfg(test)]
 pub(super) fn analyze_unused(
     definitions: &[StepDefinition],
     used: &BTreeSet<usize>,
     config: &Config,
     suppressions: &SuppressionIndex<'_>,
     findings: &mut Vec<Finding>,
-    mut suppression_remaining: u64,
+    suppression_remaining: u64,
 ) -> Option<String> {
+    analyze_unused_with_limits(
+        definitions,
+        used,
+        config,
+        suppressions,
+        findings,
+        suppression_remaining,
+        super::UNUSED_FINDING_LIMITS,
+    )
+}
+
+/// Admits unused evidence by record count and retained payload before building each finding.
+pub(super) fn analyze_unused_with_limits(
+    definitions: &[StepDefinition],
+    used: &BTreeSet<usize>,
+    config: &Config,
+    suppressions: &SuppressionIndex<'_>,
+    findings: &mut Vec<Finding>,
+    mut suppression_remaining: u64,
+    (max_records, max_bytes): (usize, usize),
+) -> Option<String> {
+    const PREFIX: &str = "Step definition `";
+    const SUFFIX: &str = "` is not used by the feature corpus";
+    const DIFFERENCE: &str = "No discovered feature step matched this definition";
+    const ACTION: &str = "Remove the definition or add the missing feature usage";
+    const OMITTED: &str =
+        "Unused-definition findings are partial because retained evidence reached its safety limit.";
+
     let severity = config.severity(Rule::UnusedDefinition);
     if severity == Severity::Off {
         return None;
     }
+    let first = findings.len();
+    let mut bytes = crate::resource_limits::WorkBudget::new(max_bytes);
     for (index, definition) in definitions.iter().enumerate() {
         if used.contains(&index) || !definition.analysis_profile().matches_by_text() {
             continue;
+        }
+        if findings.len() - first == max_records {
+            return Some(OMITTED.to_owned());
         }
         let Ok(reason) = suppressions.find_reason_with_budget(
             Rule::UnusedDefinition,
@@ -1470,36 +1504,47 @@ pub(super) fn analyze_unused(
                     .to_owned(),
             );
         };
+        let retained_bytes = (std::mem::size_of::<Finding>()
+            + PREFIX.len()
+            + SUFFIX.len()
+            + DIFFERENCE.len()
+            + ACTION.len()
+            + definition.matcher.len().min(MAX_EVIDENCE_TEXT_BYTES))
+        .saturating_add(
+            definition
+                .location
+                .path
+                .as_os_str()
+                .as_encoded_bytes()
+                .len(),
+        )
+        .saturating_add(reason.map_or(0, str::len));
+        if !bytes.admit(retained_bytes) {
+            return Some(OMITTED.to_owned());
+        }
         findings.push(Finding {
             original_fingerprint: (definition.matcher.len() > MAX_EVIDENCE_TEXT_BYTES).then(|| {
                 original_fallback_fingerprint(
                     Rule::UnusedDefinition,
-                    &[
-                        "Step definition `",
-                        &definition.matcher,
-                        "` is not used by the feature corpus",
-                    ],
-                    &["No discovered feature step matched this definition"],
+                    &[PREFIX, &definition.matcher, SUFFIX],
+                    &[DIFFERENCE],
                     &[""],
                 )
             }),
             rule: Rule::UnusedDefinition,
             severity,
-            message: format!(
-                "Step definition `{}` is not used by the feature corpus",
-                evidence_text(&definition.matcher)
-            ),
+            message: format!("{PREFIX}{}{SUFFIX}", evidence_text(&definition.matcher)),
             primary: definition.location.clone(),
             related: Vec::new(),
             evidence: FindingEvidence {
                 matcher_similarity: None,
                 handler_similarity: None,
-                matcher_difference: "No discovered feature step matched this definition".to_owned(),
+                matcher_difference: DIFFERENCE.to_owned(),
                 handler_evidence: String::new(),
                 comparison: None,
                 cluster: None,
             },
-            suggested_action: "Remove the definition or add the missing feature usage".to_owned(),
+            suggested_action: ACTION.to_owned(),
             suppression: reason.map(|reason| crate::model::Suppression {
                 reason: reason.to_owned(),
             }),

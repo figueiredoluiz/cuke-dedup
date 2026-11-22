@@ -364,6 +364,26 @@
     "src/analysis/tests.rs": {
       "tests": [
         {
+          "name": "retained_output_pair_collection_preserves_findings_and_census",
+          "requiredStatus": "rust-evidence",
+          "evidenceTest": {
+            "file": "src/analysis/tests.rs",
+            "name": "retained_output_pair_collection_preserves_findings_and_census"
+          },
+          "rationale": "Ruby definitions verify that bounded pair evidence preserves findings and candidate counts, and refuses to write a partial oracle.",
+          "behaviorClass": "ruby-behavior"
+        },
+        {
+          "name": "retained_output_fingerprint_writer_counts_records_and_serialized_bytes",
+          "requiredStatus": "rust-evidence",
+          "evidenceTest": {
+            "file": "src/analysis/tests.rs",
+            "name": "retained_output_fingerprint_writer_counts_records_and_serialized_bytes"
+          },
+          "rationale": "A Ruby definition exercises exact record and byte ceilings, including escapes and the line ending in its serialized fingerprint.",
+          "behaviorClass": "ruby-behavior"
+        },
+        {
           "name": "fingerprint_behavior_digest_covers_effect_stream_and_capture_scope",
           "requiredStatus": "engine-invariant",
           "stage": "model-codec",
@@ -1371,6 +1391,16 @@
     "src/analysis/usage/tests.rs": {
       "tests": [
         {
+          "name": "retained_output_unused_findings_stop_at_either_limit",
+          "requiredStatus": "rust-evidence",
+          "evidenceTest": {
+            "file": "src/analysis/usage/tests.rs",
+            "name": "retained_output_unused_findings_stop_at_either_limit"
+          },
+          "rationale": "Ruby definitions verify the retained prefix and completion status at record and cumulative byte boundaries.",
+          "behaviorClass": "ruby-behavior"
+        },
+        {
           "name": "cucumber_expression_expansion_stops_at_the_regex_pattern_limit",
           "requiredStatus": "engine-invariant",
           "stage": "regex-compiler",
@@ -1745,6 +1775,30 @@
     },
     "src/cli/tests.rs": {
       "tests": [
+        {
+          "name": "retained_output_unused_limit_respects_feature_input_and_reports_incompleteness",
+          "requiredStatus": "rust-evidence",
+          "evidenceTest": {
+            "file": "src/cli/tests.rs",
+            "name": "retained_output_unused_limit_respects_feature_input_and_reports_incompleteness"
+          },
+          "rationale": "Ruby discovery and extraction exercise both a definition-only corpus and an empty feature under the unused-finding limit, checking reports and baseline eligibility.",
+          "behaviorClass": "ruby-behavior"
+        },
+        {
+          "name": "retained_output_diagnostic_omission_preserves_failure_status",
+          "requiredStatus": "engine-invariant",
+          "stage": "bounded-analysis",
+          "rationale": "Severity decisions use error state even when no diagnostic detail fits.",
+          "behaviorClass": "shared-engine-invariant"
+        },
+        {
+          "name": "retained_output_oracle_overflow_keeps_both_destination_files",
+          "requiredStatus": "engine-invariant",
+          "stage": "bounded-analysis",
+          "rationale": "Shared artifact staging discards both stages when writing the later one fails.",
+          "behaviorClass": "shared-engine-invariant"
+        },
         {
           "name": "extracted_parameter_types_are_attributed_to_the_extracting_adapter",
           "requiredStatus": "engine-invariant",
@@ -3087,6 +3141,13 @@
     },
     "src/modes/tests.rs": {
       "tests": [
+        {
+          "name": "retained_output_baseline_is_replaced_only_at_or_under_the_write_ceiling",
+          "requiredStatus": "engine-invariant",
+          "stage": "bounded-analysis",
+          "rationale": "Shared baseline updates stage exact output and preserve existing evidence on refusal.",
+          "behaviorClass": "shared-engine-invariant"
+        },
         {
           "name": "source_enumeration_git_shares_records_and_bytes",
           "requiredStatus": "engine-invariant",
@@ -8374,6 +8435,13 @@
     },
     "src/display_text/tests.rs": {
       "tests": [
+        {
+          "name": "retained_output_diagnostic_byte_limit_counts_escapes_and_line_overhead",
+          "requiredStatus": "engine-invariant",
+          "stage": "bounded-analysis",
+          "rationale": "Escaped byte accounting includes the diagnostic line prefix and leaves a single omission marker.",
+          "behaviorClass": "shared-engine-invariant"
+        },
         {
           "name": "generated_diagnostics_match_the_escape_oracle",
           "requiredStatus": "engine-invariant",

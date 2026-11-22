@@ -79,7 +79,7 @@ permissions.
 
 ## Fingerprint oracle
 
-`--emit-fingerprints FILE` writes the per-definition evidence the analyzer compared, for test tooling that must tell "no finding" apart from "nothing analyzed". It is not a reporter: stdout, stderr, report files and the exit code are the same with or without it.
+`--emit-fingerprints FILE` writes the per-definition evidence the analyzer compared, for test tooling that must tell "no finding" apart from "nothing analyzed". A successful write leaves stdout, stderr, report files and the analysis exit code unchanged.
 
 - One compact JSON line per analyzed definition, sorted by path, line and column. A definition from an excluded, unselected or unreadable source, or one removed by an uncertain registration, has no line; an empty corpus writes an empty file.
 - Every definition extracted from the current tree is written, including under `--changed-since`; `--baseline-from-ref` does not write the baseline revision's definitions.
@@ -91,19 +91,20 @@ permissions.
   - cannot be created, or its directory cannot hold the hidden file (no permission, no space);
   - exists but is not a regular file (a directory, a device or a FIFO);
   - is the same file as `cuke-dedup.json`, `cuke-dedup.html` or `cuke-dedup.sarif` in the output directory (all three, whatever reporters are enabled) or as the `--baseline` file (with or without `--update-baseline`), including through a `..` path, a hard link, a case-insensitive spelling, or a report or baseline path that is itself a symbolic link to the destination;
-  - cannot be checked against one of those files because the file's identity cannot be read (for example, its directory cannot be searched).
+  - cannot be checked against one of those files because the file's identity cannot be read (for example, its directory cannot be searched);
+  - would contain more than 100,000 records or 64 MiB of serialized JSONL, including escaping and newlines.
 
   A rejection truncates nothing, leaves no file (only parent directories it created) and changes no baseline. `--print-config` rejects the flag.
 
 Fields, in this order: `schemaVersion` (`"1"`), `path` (root-relative, `/`-separated), `line`, `column`, `domain` (`ecmascript` or `ruby`), `framework`, `registration`, `matcher`, `matcherKind`, `matcherFlags`, `normalizedMatcher`, `definitionFingerprint` (the value reports use as `leftFingerprint`/`rightFingerprint`), and `handler` with `exact`, `normalized`, `alphaNormalized`, `structural`, `behavior`, `comparable` and `trivial`.
 
-Each `handler` representation is a 32-hex digest of the analyzer's comparison key: equal digests mean the analyzer treats that representation as equal. Digests are comparable within one build only. `behavior` digests the ordered behaviour events together with the handler's effect-stream regime and capture scope when it has them. `duplicate-handler`, `parameterization-candidate` and `near-duplicate-step` consider a pair only when both definitions have `comparable: true` and `trivial: false`. Matcher text is written verbatim, without report sanitization or bounds.
+Each `handler` representation is a 32-hex digest of the analyzer's comparison key: equal digests mean the analyzer treats that representation as equal. Digests are comparable within one build only. `behavior` digests the ordered behaviour events together with the handler's effect-stream regime and capture scope when it has them. `duplicate-handler`, `parameterization-candidate` and `near-duplicate-step` consider a pair only when both definitions have `comparable: true` and `trivial: false`. Matcher text is written verbatim within each accepted artifact.
 
 ## Pair evidence
 
-`--emit-pairs FILE` writes what the pair verifier decided for each candidate pair it evaluated, for test tooling that must tell "no finding" apart from "pair never compared". Like `--emit-fingerprints` it is not a reporter and changes no other output. Destination and failure rules are the same as for `--emit-fingerprints`, and `FILE` must also differ from the `--emit-fingerprints` file.
+`--emit-pairs FILE` writes what the pair verifier decided for each candidate pair it evaluated, for test tooling that must tell "no finding" apart from "pair never compared". A successful write leaves the analysis output unchanged. Destination and failure rules are the same as for `--emit-fingerprints`, and `FILE` must also differ from the `--emit-fingerprints` file.
 
-- One compact JSON line per evaluated candidate pair, in verification order (by definition position). Records are held in memory until the write, bounded by the candidate-pair ceiling. A pair no candidate source proposed has no line. When a work limit stops verification, the pairs not yet verified have no line and the run is incomplete.
+- One compact JSON line per evaluated candidate pair, in verification order (by definition position). The verifier keeps at most 100,000 records for this artifact. Going over the record or 64 MiB serialized byte ceiling rejects the artifact without changing the verifier’s findings. A pair no candidate source proposed has no line. When a work limit stops verification, the pairs not yet verified have no line and the run is incomplete.
 - Pairs of `ambiguous-step`, `overlapping-matcher` and `unused-definition` are not written; those rules do not compare definition pairs through this stage.
 - `--print-config` rejects the flag.
 

@@ -123,13 +123,18 @@ pub(super) fn render_html_context_with_metadata(
     let mut truncation_notice = String::new();
     if let Some(metadata) = metadata.filter(|metadata| metadata.analysis.truncated) {
         let analysis = metadata.analysis;
-        truncation_notice.push_str(&format!(
-            r#"<p class="truncation-notice" role="alert">{}</p>"#,
-            html_escape(&format!(
+        let message = if analysis.skipped_candidate_comparisons > 0 {
+            format!(
                 "Analysis is incomplete: {} candidate comparisons were evaluated and {} were skipped after configured limits.",
                 analysis.candidate_comparisons_evaluated,
                 analysis.skipped_candidate_comparisons
-            ))
+            )
+        } else {
+            "Analysis is incomplete: a safety limit omitted some analysis results.".to_owned()
+        };
+        truncation_notice.push_str(&format!(
+            r#"<p class="truncation-notice" role="alert">{}</p>"#,
+            html_escape(&message)
         ));
     }
     if metadata.is_some_and(|metadata| metadata.corpus.incomplete) {
