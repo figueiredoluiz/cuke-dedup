@@ -18,6 +18,12 @@ use anyhow::{bail, Result};
 use serde::Serialize;
 use std::collections::BTreeMap;
 
+/// Default record and byte allowances for unused finding evidence.
+pub(crate) const UNUSED_FINDING_LIMITS: (usize, usize) = (
+    crate::resource_limits::MAX_UNUSED_FINDINGS,
+    evidence::MAX_FINDING_EVIDENCE_BYTES,
+);
+
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct CandidateSourceCensus {
@@ -75,7 +81,16 @@ pub fn analyze_with_diagnostics(
     feature_steps: Vec<FeatureStep>,
     config: &Config,
 ) -> Result<AnalysisOutcome> {
-    Ok(analyze_internal(definitions, feature_steps, config, false, None, None)?.0)
+    Ok(analyze_internal(
+        definitions,
+        feature_steps,
+        config,
+        false,
+        None,
+        None,
+        Some(UNUSED_FINDING_LIMITS),
+    )?
+    .0)
 }
 
 /// Analyzes definitions with indirect usage merged from every selected Ruby source.
@@ -86,17 +101,27 @@ pub fn analyze_with_step_usage(
     config: &Config,
     usage: &crate::source_adapter::IndirectStepUsage,
 ) -> Result<AnalysisOutcome> {
-    Ok(analyze_internal(definitions, feature_steps, config, false, Some(usage), None)?.0)
+    Ok(analyze_internal(
+        definitions,
+        feature_steps,
+        config,
+        false,
+        Some(usage),
+        None,
+        Some(UNUSED_FINDING_LIMITS),
+    )?
+    .0)
 }
 
 /// CLI entry point: analysis with indirect usage that also returns the candidate census and the
-/// config suppressions that select no definition, a list cut short past its work limit.
+/// config suppressions that select no definition. Missing unused limits disable unused findings.
 pub(crate) fn analyze_for_cli(
     indirect_usage: &crate::source_adapter::IndirectStepUsage,
     definitions: Vec<StepDefinition>,
     feature_steps: Vec<FeatureStep>,
     config: &Config,
-    pair_records: Option<&mut Vec<pair_records::PairRecord>>,
+    pair_records: Option<&mut pair_records::PairRecords>,
+    unused_limits: Option<(usize, usize)>,
 ) -> Result<(
     AnalysisOutcome,
     AnalysisCensus,
@@ -109,6 +134,7 @@ pub(crate) fn analyze_for_cli(
         true,
         Some(indirect_usage),
         pair_records,
+        unused_limits,
     )
 }
 
@@ -139,7 +165,8 @@ fn analyze_internal(
     config: &Config,
     include_unmatched_suppressions: bool,
     indirect_usage: Option<&crate::source_adapter::IndirectStepUsage>,
-    pair_records: Option<&mut Vec<pair_records::PairRecord>>,
+    pair_records: Option<&mut pair_records::PairRecords>,
+    unused_limits: Option<(usize, usize)>,
 ) -> Result<(
     AnalysisOutcome,
     AnalysisCensus,
@@ -180,14 +207,18 @@ fn analyze_internal(
         overlap_budget,
     );
     usage::apply_indirect_usage(&definitions, indirect_usage, config, &mut usage);
-    let unused_incomplete = usage::analyze_unused(
-        &definitions,
-        &usage.used,
-        config,
-        &suppressions,
-        &mut findings,
-        usage.suppression_remaining,
-    );
+    let unused_incomplete = unused_limits.and_then(|limits| {
+        usage::analyze_unused_with_limits(
+            &definitions,
+            &usage.used,
+            config,
+            &suppressions,
+            &mut findings,
+            usage.suppression_remaining,
+            limits,
+        )
+    });
+    let unused_truncated = unused_incomplete.is_some();
     usage.incomplete.extend(unused_incomplete);
     let unmatched_suppressions = if include_unmatched_suppressions {
         suppressions.unmatched()
@@ -210,7 +241,7 @@ fn analyze_internal(
         .skipped_candidate_comparisons
         .saturating_add(usage.overlap_census.skipped);
     census.truncated |= usage.overlap_census.skipped > 0;
-    census.truncated |= usage.ambiguity_truncated;
+    census.truncated |= usage.ambiguity_truncated || unused_truncated;
     census
         .candidate_sources
         .insert("matcherOverlap".to_owned(), usage.overlap_census);

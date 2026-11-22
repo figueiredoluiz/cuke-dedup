@@ -2360,6 +2360,7 @@ fn candidate_limits_preserve_partial_analysis_and_report_skipped_work() {
         Vec::new(),
         &config,
         None,
+        Some(UNUSED_FINDING_LIMITS),
     )
     .unwrap();
     assert!(!outcome.result.findings.is_empty());
@@ -2393,7 +2394,7 @@ fn similarity_work_limits_fail_closed_before_quadratic_pair_verification() {
     let (_directory, config) = config();
     let mut findings = Vec::new();
     let suppressions = super::suppression::SuppressionIndex::new(&config, &long_matchers);
-    let mut records = Vec::new();
+    let mut records = pair_records::PairRecords::default();
     let pair_analysis = analyze_definition_pairs(
         &long_matchers,
         &config,
@@ -2401,11 +2402,10 @@ fn similarity_work_limits_fail_closed_before_quadratic_pair_verification() {
         &mut findings,
         Some(&mut records),
     );
-    // A pair whose verification was skipped has no record; the evaluated count is the record count.
-    assert_eq!(
-        records.len(),
-        pair_analysis.census.candidate_comparisons_evaluated
-    );
+    // A pair whose verification was skipped has no artifact record.
+    let mut artifact = Vec::new();
+    pair_records::write_pairs(&long_matchers, &records, &config.root, &mut artifact).unwrap();
+    assert!(artifact.is_empty());
     assert!(pair_analysis.census.truncated);
     assert_eq!(pair_analysis.census.candidate_comparisons_evaluated, 0);
     assert_eq!(pair_analysis.census.skipped_candidate_comparisons, 1);
@@ -2436,7 +2436,7 @@ fn similarity_work_limits_fail_closed_before_quadratic_pair_verification() {
     }
     let mut findings = Vec::new();
     let suppressions = super::suppression::SuppressionIndex::new(&config, &long_handlers);
-    let mut records = Vec::new();
+    let mut records = pair_records::PairRecords::default();
     let pair_analysis = analyze_definition_pairs(
         &long_handlers,
         &config,
@@ -2444,11 +2444,10 @@ fn similarity_work_limits_fail_closed_before_quadratic_pair_verification() {
         &mut findings,
         Some(&mut records),
     );
-    // A pair whose verification was skipped has no record; the evaluated count is the record count.
-    assert_eq!(
-        records.len(),
-        pair_analysis.census.candidate_comparisons_evaluated
-    );
+    // A pair whose verification was skipped has no artifact record.
+    let mut artifact = Vec::new();
+    pair_records::write_pairs(&long_handlers, &records, &config.root, &mut artifact).unwrap();
+    assert!(artifact.is_empty());
     assert!(pair_analysis.census.truncated);
     assert_eq!(pair_analysis.census.candidate_comparisons_evaluated, 0);
     assert_eq!(pair_analysis.census.skipped_candidate_comparisons, 1);
@@ -2802,6 +2801,7 @@ fn candidate_limit_diagnostic_bounds_affected_class_locations() {
         Vec::new(),
         &config,
         None,
+        Some(UNUSED_FINDING_LIMITS),
     )
     .unwrap();
     assert_eq!(census.truncated_structural_classes, 5);
@@ -2817,6 +2817,7 @@ fn candidate_limit_diagnostic_bounds_affected_class_locations() {
         Vec::new(),
         &config,
         None,
+        Some(UNUSED_FINDING_LIMITS),
     )
     .unwrap();
     assert_eq!(census.truncated_structural_classes, 1);
@@ -5881,4 +5882,82 @@ fn fingerprint_behavior_digest_covers_effect_stream_and_capture_scope() {
             .len(),
         3
     );
+}
+
+/// Optional collection may reject a whole artifact without changing any verification outcome.
+#[test]
+fn retained_output_pair_collection_preserves_findings_and_census() {
+    let definitions = definitions(
+        "Given('one', () => work()); Given('two', () => work()); Given('three', () => work());",
+    );
+    let (_directory, config) = config();
+    let run = |pairs: Option<&mut pair_records::PairRecords>| {
+        analyze_for_cli(
+            &crate::source_adapter::IndirectStepUsage::default(),
+            definitions.clone(),
+            Vec::new(),
+            &config,
+            pairs,
+            Some(UNUSED_FINDING_LIMITS),
+        )
+        .unwrap()
+    };
+    let (without, without_census, _) = run(None);
+    let mut pairs = pair_records::PairRecords::with_limit(1);
+    let (with, with_census, _) = run(Some(&mut pairs));
+    assert!(without_census.candidate_comparisons_evaluated > 1);
+    assert_eq!(with.result.findings, without.result.findings);
+    assert_eq!(with.incomplete, without.incomplete);
+    assert_eq!(with_census, without_census);
+    let mut bytes = Vec::new();
+    let error =
+        pair_records::write_pairs(&definitions, &pairs, &config.root, &mut bytes).unwrap_err();
+    assert!(error.to_string().contains("record limit exceeded"));
+    assert!(bytes.is_empty());
+
+    let mut pairs =
+        pair_records::PairRecords::with_limit(without_census.candidate_comparisons_evaluated);
+    run(Some(&mut pairs));
+    pair_records::write_pairs(&definitions, &pairs, &config.root, &mut bytes).unwrap();
+    assert_eq!(
+        bytes.split_inclusive(|&byte| byte == b'\n').count(),
+        without_census.candidate_comparisons_evaluated,
+    );
+    let error = pair_records::write_pairs_with_limit(
+        &definitions,
+        &pairs,
+        &config.root,
+        &mut std::io::sink(),
+        bytes.len() - 1,
+    )
+    .unwrap_err();
+    assert_eq!(error.to_string(), "output byte limit exceeded");
+}
+
+/// The byte allowance for the definition oracle includes escapes and the last line terminator.
+#[test]
+fn retained_output_fingerprint_writer_counts_records_and_serialized_bytes() {
+    let mut definitions = definitions("Given('café', () => work());");
+    definitions[0].matcher.push_str("\n\t\"");
+    let (_directory, config) = config();
+    let mut bytes = Vec::new();
+    fingerprints::write_fingerprints(&definitions, &config.root, &mut bytes).unwrap();
+    assert_eq!(bytes.last(), Some(&b'\n'));
+    for (records, limit, accepted) in [
+        (1, bytes.len(), true),
+        (0, bytes.len(), false),
+        (1, bytes.len() - 1, false),
+    ] {
+        let mut written = Vec::new();
+        let result = fingerprints::write_fingerprints_with_limits(
+            &definitions,
+            &config.root,
+            &mut written,
+            (records, limit),
+        );
+        assert_eq!(result.is_ok(), accepted);
+        if accepted {
+            assert_eq!(written, bytes);
+        }
+    }
 }

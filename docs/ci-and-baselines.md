@@ -112,7 +112,7 @@ changes do not make a finding new, while an additional occurrence beyond the rec
 Version `1` and `2` baselines can be replaced by running the version `3` tool with `--update-baseline`; comparison rejects mismatched schemas and names the regeneration command.
 
 Updates reject `--changed-since` and are skipped after incomplete analysis or an operational error,
-preventing a partial scan from erasing accepted findings.
+preventing a partial scan from erasing accepted findings. An update whose serialized output exceeds the 8 MiB baseline read limit fails before replacing the previous file.
 
 ### Compare against a Git revision
 

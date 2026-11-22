@@ -1,6 +1,7 @@
 //! Gitignore-aware repository discovery.
 
 use crate::config::Config;
+use crate::display_text::DiagnosticDetails;
 use crate::gherkin::FeatureFormat;
 use crate::resource_limits::{
     MAX_DISCOVERY_GLOB_EVALUATIONS, MAX_DISCOVERY_SELECTED_FILES, MAX_DISCOVERY_SOURCE_BYTES,
@@ -168,6 +169,7 @@ pub(crate) fn discover_within(
     };
     let excludes = ExcludeSet(compile_globs(&config.exclude, "exclude")?);
     let mut files = DiscoveredFiles::default();
+    let mut errors = DiagnosticDetails::default();
 
     let root = config.root.clone();
     let walk_excludes = excludes.clone();
@@ -177,7 +179,7 @@ pub(crate) fn discover_within(
     let walk_rules = Arc::clone(&rules);
     if ancestor_error {
         budget.spend(ENTRIES, 1)?;
-        files.errors.push(format!(
+        errors.push(format!(
             "failed while walking target directory {}: an ignore file above it has invalid entries",
             config.root.display()
         ));
@@ -214,7 +216,7 @@ pub(crate) fn discover_within(
             Ok(entry) => entry,
             Err(error) => {
                 budget.spend(ENTRIES, 1)?;
-                files.errors.push(format!(
+                errors.push(format!(
                     "failed while walking target directory {}: {error}",
                     config.root.display()
                 ));
@@ -322,6 +324,7 @@ pub(crate) fn discover_within(
                 .map(|file| &file.path),
         )?,
     };
+    files.errors = errors.into_lines();
     config
         .adapters()
         .discover_dependencies(config, &excludes, &mut files);

@@ -1,4 +1,5 @@
 use super::*;
+use crate::display_text::DIAGNOSTIC_OMISSION;
 
 mod properties;
 use crate::typescript::TYPESCRIPT;
@@ -35,7 +36,14 @@ fn finalization_failure_discards_provisional_definitions_and_reports_incompleten
         .errors
         .iter()
         .any(|e| e == "failed to finalize source evidence: adapter unavailable"));
-    let analyzed = analyze_corpus(&config, corpus, &mut diagnostics, false).unwrap();
+    let analyzed = analyze_corpus(
+        &config,
+        corpus,
+        &mut diagnostics,
+        false,
+        analysis::UNUSED_FINDING_LIMITS,
+    )
+    .unwrap();
     assert!(analyzed.run_incomplete);
     assert!(analyzed.result.findings.is_empty());
 }
@@ -94,10 +102,7 @@ fn unparseable_diagnostics_are_tolerated_by_default_and_escalated_by_the_flag() 
         )
     };
     let route = |config: &Config, diagnostic: ExtractionDiagnostic| {
-        let mut diagnostics = Diagnostics {
-            warnings: Vec::new(),
-            errors: Vec::new(),
-        };
+        let mut diagnostics = Diagnostics::default();
         let mut incomplete = false;
         collect_extraction_diagnostics(
             config,
@@ -187,10 +192,7 @@ fn typed_adapter_diagnostics_route_independently_of_language_and_wording() {
                 ExtractionDiagnosticLevel::Warning,
                 ExtractionDiagnosticLevel::Error,
             ] {
-                let mut diagnostics = Diagnostics {
-                    warnings: vec![],
-                    errors: vec![],
-                };
+                let mut diagnostics = Diagnostics::default();
                 let mut actual_incomplete = false;
                 collect_extraction_diagnostics(
                     &config,
@@ -306,4 +308,172 @@ fn extracted_parameter_types_are_attributed_to_the_extracting_adapter() {
         .map(|declaration| declaration.domain.display_name)
         .collect();
     assert_eq!(domains, ["Ruby"]);
+}
+
+/// A fully omitted operational error still fails the run and prints an error detail marker.
+#[test]
+fn retained_output_diagnostic_omission_preserves_failure_status() {
+    let directory = tempfile::tempdir().unwrap();
+    let config = Config::load(directory.path(), ConfigOverrides::default()).unwrap();
+    let mut diagnostics = Diagnostics {
+        errors: DiagnosticDetails::with_limits(0, 0),
+        warnings: DiagnosticDetails::with_limits(1, 1024),
+    };
+    diagnostics.warnings.push("first warning".to_owned());
+    diagnostics.warnings.push("another warning".to_owned());
+    diagnostics.errors.push("cannot read input".to_owned());
+    assert_eq!(
+        determine_exit_code(
+            &config,
+            &CheckOptions::default(),
+            &crate::model::AnalysisResult {
+                definitions: Vec::new(),
+                feature_steps: Vec::new(),
+                findings: Vec::new(),
+            },
+            None,
+            &diagnostics,
+        )
+        .unwrap(),
+        2,
+    );
+    assert_eq!(
+        diagnostics.warnings.iter().collect::<Vec<_>>(),
+        ["first warning", DIAGNOSTIC_OMISSION],
+    );
+    assert_eq!(
+        diagnostics.errors.iter().collect::<Vec<_>>(),
+        [DIAGNOSTIC_OMISSION],
+    );
+}
+
+/// If the second artifact exceeds its byte ceiling, neither staged destination is published.
+#[test]
+fn retained_output_oracle_overflow_keeps_both_destination_files() {
+    let directory = tempfile::tempdir().unwrap();
+    let config = Config::load(directory.path(), ConfigOverrides::default()).unwrap();
+    let options = CheckOptions::default();
+    let first = config.root.join("fingerprints.jsonl");
+    let second = config.root.join("pairs.jsonl");
+    std::fs::write(&first, "previous fingerprints").unwrap();
+
+    for existing in [false, true] {
+        if existing {
+            std::fs::write(&second, "previous pairs").unwrap();
+        }
+        let fingerprints = EmitSink::open(&config, &options, &first, "fingerprint file", None)
+            .unwrap()
+            .fill(|out| Ok(out.write_all(b"staged fingerprints")?))
+            .unwrap();
+        let result = EmitSink::open(&config, &options, &second, "pair file", Some(&fingerprints))
+            .unwrap()
+            .fill(|out| {
+                let mut bounded = crate::resource_limits::LimitedWriter {
+                    inner: out,
+                    remaining: 1,
+                };
+                bounded.write_all(b"line\n")?;
+                Ok(())
+            });
+        assert!(
+            matches!(result, Err(error) if format!("{error:#}").contains("byte limit exceeded"))
+        );
+        drop(fingerprints);
+        assert_eq!(
+            std::fs::read_to_string(&first).unwrap(),
+            "previous fingerprints"
+        );
+        assert_eq!(second.exists(), existing);
+        if existing {
+            assert_eq!(std::fs::read_to_string(&second).unwrap(), "previous pairs");
+        }
+    }
+}
+
+/// Unused retention marks reports incomplete only when the feature corpus permits unused analysis.
+#[test]
+fn retained_output_unused_limit_respects_feature_input_and_reports_incompleteness() {
+    for has_feature in [false, true] {
+        let directory = tempfile::tempdir().unwrap();
+        let root = directory.path();
+        std::fs::write(
+            root.join("steps.ts"),
+            "import { Given } from '@cucumber/cucumber'; Given('rain forecast', () => grabUmbrella()); Given('receipt sent', () => recordOrder());",
+        )
+        .unwrap();
+        if has_feature {
+            std::fs::write(root.join("empty.feature"), "Feature: Empty\n").unwrap();
+        }
+        let mut config = Config::load(root, ConfigOverrides::default()).unwrap();
+        config
+            .rules
+            .extend(Rule::ALL.iter().map(|&rule| (rule, Severity::Off)));
+        config
+            .rules
+            .insert(Rule::UnusedDefinition, Severity::Warning);
+        config.fail_on_incomplete = true;
+        config.reporters = vec![ReporterKind::Json, ReporterKind::Html];
+        let options = CheckOptions {
+            baseline: Some(PathBuf::from("baseline.json")),
+            update_baseline: true,
+            ..Default::default()
+        };
+        let discovery_budget = discovery::DiscoveryBudget::default();
+        let files = discovery::discover_within(&config, &discovery_budget).unwrap();
+        let mut diagnostics = discovery_diagnostics(&config, &files, &None);
+        let mut feature_budget = gherkin::FeatureStepBudget::default();
+        let extracted = extract_corpus(
+            &config,
+            &files,
+            &None,
+            &mut diagnostics,
+            &mut feature_budget,
+        );
+        assert_eq!(extracted.definitions.len(), 2);
+        let mut analyzed =
+            analyze_corpus(&config, extracted, &mut diagnostics, false, (1, usize::MAX)).unwrap();
+        assert_eq!(analyzed.result.findings.len(), usize::from(has_feature));
+        assert_eq!(analyzed.run_incomplete, has_feature);
+        assert!(!analyzed.corpus_incomplete);
+        assert_eq!(analyzed.census.skipped_candidate_comparisons, 0);
+        let outcome = apply_baseline_mode(
+            &config,
+            &options,
+            &mut analyzed.result,
+            analyzed.run_incomplete,
+            &mut diagnostics,
+            &mut feature_budget,
+            &discovery_budget,
+        )
+        .unwrap();
+        assert_eq!(outcome.is_some(), !has_feature);
+        assert_eq!(config.root.join("baseline.json").is_file(), !has_feature);
+        assert_eq!(
+            determine_exit_code(&config, &options, &analyzed.result, outcome, &diagnostics)
+                .unwrap(),
+            if has_feature { 2 } else { 0 },
+        );
+        write_reports(
+            &config,
+            &files,
+            &analyzed,
+            &diagnostics,
+            PhaseTimings {
+                discovery_ms: 0.0,
+                parsing_ms: 0.0,
+                analysis_ms: 0.0,
+            },
+        )
+        .unwrap();
+        let json: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(config.output_path("cuke-dedup.json")).unwrap())
+                .unwrap();
+        assert_eq!(json["analysis"]["truncated"], has_feature);
+        assert_eq!(json["corpus"]["incomplete"], false);
+        let html = std::fs::read_to_string(config.output_path("cuke-dedup.html")).unwrap();
+        assert_eq!(
+            html.contains("Analysis is incomplete: a safety limit"),
+            has_feature
+        );
+    }
 }

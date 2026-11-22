@@ -3,7 +3,8 @@
 use crate::config::canonical_platform_path;
 use crate::model::{stable_fingerprint_parts, Finding, Suppression};
 use crate::resource_limits::{
-    read_utf8, MAX_BASELINE_INPUT_BYTES, MAX_CHANGED_PATH_BYTES, MAX_CHANGED_PATH_RECORDS,
+    read_utf8, LimitedWriter, MAX_BASELINE_INPUT_BYTES, MAX_CHANGED_PATH_BYTES,
+    MAX_CHANGED_PATH_RECORDS,
 };
 use anyhow::{bail, Context, Result};
 use serde::{Deserialize, Serialize};
@@ -750,6 +751,15 @@ pub(crate) fn apply_reference_baseline(
 
 /// Rewrites a baseline from the current active findings and suppresses those findings.
 pub fn update_baseline(findings: &mut [Finding], baseline_path: &Path) -> Result<BaselineOutcome> {
+    update_baseline_with_limit(findings, baseline_path, MAX_BASELINE_INPUT_BYTES as usize)
+}
+
+/// Stages a baseline within the read ceiling before replacing it or suppressing any findings.
+fn update_baseline_with_limit(
+    findings: &mut [Finding],
+    baseline_path: &Path,
+    max_bytes: usize,
+) -> Result<BaselineOutcome> {
     let destination = crate::output_file::OutputFile::open(baseline_path, true)?;
     let previous = if let Some(file) = destination.previous() {
         load_baseline_for_update(baseline_path, file)?
@@ -759,10 +769,17 @@ pub fn update_baseline(findings: &mut [Finding], baseline_path: &Path) -> Result
     let current = build_baseline(findings);
     let added = count_added(&previous.fingerprints, &current.fingerprints);
     let removed = count_added(&current.fingerprints, &previous.fingerprints);
-    let mut text = serde_json::to_vec_pretty(&current).context("failed to serialize baseline")?;
-    text.push(b'\n');
-    destination
-        .replace(&text)
+    let stage = destination.stage(|out| {
+        let mut writer = LimitedWriter {
+            inner: out,
+            remaining: max_bytes,
+        };
+        serde_json::to_writer_pretty(&mut writer, &current)?;
+        std::io::Write::write_all(&mut writer, b"\n")?;
+        Ok(())
+    });
+    stage
+        .and_then(crate::output_file::Staged::commit)
         .with_context(|| format!("failed to write baseline {}", baseline_path.display()))?;
     let mut outcome = apply_loaded_baseline(findings, baseline_path, &current)?;
     outcome.added = added;

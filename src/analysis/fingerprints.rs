@@ -2,6 +2,8 @@
 
 use super::evidence::definition_semantic_fingerprint;
 use crate::model::{stable_fingerprint, Framework, MatcherKind, StepDefinition};
+use crate::resource_limits::{LimitedWriter, MAX_ORACLE_OUTPUT_BYTES, MAX_ORACLE_RECORDS};
+use anyhow::bail;
 use serde::Serialize;
 use std::io::Write;
 use std::path::Path;
@@ -85,9 +87,31 @@ pub(crate) fn write_fingerprints(
     root: &Path,
     out: &mut dyn Write,
 ) -> anyhow::Result<()> {
+    write_fingerprints_with_limits(
+        definitions,
+        root,
+        out,
+        (MAX_ORACLE_RECORDS, MAX_ORACLE_OUTPUT_BYTES),
+    )
+}
+
+/// Rejects excess records before serialization and charges each written byte.
+pub(super) fn write_fingerprints_with_limits(
+    definitions: &[StepDefinition],
+    root: &Path,
+    out: &mut dyn Write,
+    (max_records, max_bytes): (usize, usize),
+) -> anyhow::Result<()> {
+    if definitions.len() > max_records {
+        bail!("fingerprint record limit exceeded ({max_records})");
+    }
+    let mut writer = LimitedWriter {
+        inner: out,
+        remaining: max_bytes,
+    };
     for definition in definitions {
-        serde_json::to_writer(&mut *out, &record(definition, root))?;
-        out.write_all(b"\n")?;
+        serde_json::to_writer(&mut writer, &record(definition, root))?;
+        writer.write_all(b"\n")?;
     }
     Ok(())
 }

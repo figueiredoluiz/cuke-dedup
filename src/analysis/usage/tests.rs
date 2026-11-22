@@ -2501,3 +2501,46 @@ fn usage_work_budget_shares_suppression_admission_across_rules() {
         }
     }
 }
+
+/// Unused retention is charged only for eligible findings and reports a partial prefix.
+#[test]
+fn retained_output_unused_findings_stop_at_either_limit() {
+    let mut offered = definitions(
+        "Given('used', () => work()); Given('first', () => work()); Given('second', () => work());",
+    );
+    // Only the second eligible record is expensive.
+    offered[2].location.path = PathBuf::from("longer/path/for/second.ts");
+    let (_directory, mut config) = config();
+    config
+        .rules
+        .insert(Rule::UnusedDefinition, Severity::Warning);
+    let suppressions = SuppressionIndex::new(&config, &offered);
+    let used = BTreeSet::from([0]);
+
+    let run = |records, bytes| {
+        let mut findings = Vec::new();
+        let incomplete = analyze_unused_with_limits(
+            &offered,
+            &used,
+            &config,
+            &suppressions,
+            &mut findings,
+            MAX_USAGE_SUPPRESSION_WORK,
+            (records, bytes),
+        );
+        (findings, incomplete)
+    };
+    let (complete, status) = run(2, usize::MAX);
+    assert!(status.is_none());
+    assert_eq!(complete.len(), 2);
+    assert_eq!(complete[0].primary, offered[1].location);
+
+    for (records, bytes) in [(1, usize::MAX), (2, 0)] {
+        let (findings, status) = run(records, bytes);
+        let expected = usize::from(bytes > 0);
+        assert_eq!(findings, complete[..expected]);
+        assert!(status
+            .unwrap()
+            .contains("Unused-definition findings are partial"));
+    }
+}

@@ -138,6 +138,7 @@ the proof limit. Suites that use only direct step registrations are unaffected.
 | Raw overlap witness proposals | Four times the remaining unique-pair budget |
 | Overlap witness index scans | Four times the configured unique-pair limit |
 | Retained overlap findings | 10,000 |
+| Retained unused-definition findings | 10,000 records / 16 MiB of retained evidence |
 | Retained pair / static-overlap evidence | 16 MiB each |
 | Trigram keys per definition / per run | 4,096 / 250,000 |
 | Matcher-blocking posting proposals | 2,000,000 |
@@ -167,6 +168,8 @@ Reaching a candidate-generation or verification limit preserves evaluated findin
 sets `analysis.truncated: true` with a nonzero skipped count. Exit status follows finding severity
 unless `--fail-on-incomplete` is enabled. Baselines are never updated from incomplete analysis.
 
+When the unused-definition evidence limit is reached, the tool keeps the findings it has admitted and marks `analysis.truncated: true`. Use `--fail-on-incomplete` to make this an operational failure.
+
 ## Report safety
 
 Reports bound source snippets and cluster memberships, escape HTML, encode script-closing JSON
@@ -179,6 +182,8 @@ messages) and the Action's own messages escape the same characters instead of re
 control characters and U+2028/U+2029: `\n`, `\r` and `\t` by name, others as `\u{hex}`
 (`\u{1b}`, `\u{202e}`). Each diagnostic stays on one line that starts with `cuke-dedup` or
 `error:`, so a file name cannot start a CI workflow command. Backslashes are not escaped.
+
+Warnings, errors, and discovery explanations each keep up to 4,096 details and 1 MiB of escaped lines, plus one line to indicate omitted details. Long details are sampled before escaping. Omitted error details still cause an operational failure.
 
 See [Reports](reports.md) for presentation limits and [Discovery and frameworks](discovery-and-frameworks.md)
 for corpus-completeness rules.

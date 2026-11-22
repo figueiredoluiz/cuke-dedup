@@ -747,3 +747,41 @@ fn source_enumeration_git_rejects_malformed_listing() {
         );
     }
 }
+
+/// The update counts the trailing newline, preserves old bytes and does not suppress on refusal.
+#[test]
+fn retained_output_baseline_is_replaced_only_at_or_under_the_write_ceiling() {
+    let root = tempfile::tempdir().unwrap();
+    let path = root.path().join("baseline.json");
+    let initial = br#"{"schemaVersion":3,"fingerprints":{}}"#;
+    let mut offered = [finding(root.path(), "steps/current.ts")];
+    update_baseline(&mut offered, &path).unwrap();
+    let expected = fs::read(&path).unwrap();
+    assert_eq!(expected.last(), Some(&b'\n'));
+
+    for existing in [false, true] {
+        if existing {
+            fs::write(&path, initial).unwrap();
+        } else {
+            fs::remove_file(&path).unwrap();
+        }
+        let mut offered = [finding(root.path(), "steps/current.ts")];
+        let error =
+            update_baseline_with_limit(&mut offered, &path, expected.len() - 1).unwrap_err();
+        assert!(format!("{error:#}").contains("byte limit exceeded"));
+        assert!(offered[0].is_active());
+        if existing {
+            assert_eq!(fs::read(&path).unwrap(), initial);
+        } else {
+            assert!(!path.exists());
+        }
+        assert_eq!(
+            fs::read_dir(root.path()).unwrap().count(),
+            usize::from(existing)
+        );
+
+        let outcome = update_baseline_with_limit(&mut offered, &path, expected.len()).unwrap();
+        assert_eq!(fs::read(&path).unwrap(), expected);
+        assert_eq!(outcome.suppressed, 1);
+    }
+}

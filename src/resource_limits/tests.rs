@@ -209,6 +209,11 @@ fn release_resource_limits_match_the_documented_policy() {
     assert_eq!(MINIFIED_MEAN_LINE_BYTES, 200);
     assert_eq!(MAX_REPORT_FIELD_BYTES, 8 * 1024);
     assert_eq!(MAX_BUFFERED_REPORT_BYTES, 16 * 1024 * 1024);
+    assert_eq!(MAX_UNUSED_FINDINGS, 10_000);
+    assert_eq!(MAX_ORACLE_RECORDS, 100_000);
+    assert_eq!(MAX_ORACLE_OUTPUT_BYTES, 64 * 1024 * 1024);
+    assert_eq!(MAX_DIAGNOSTIC_RECORDS, 4_096);
+    assert_eq!(MAX_DIAGNOSTIC_BYTES, 1024 * 1024);
 }
 
 /// Every `pub(crate) const` in `resource_limits.rs` has an `assert_eq!` in the policy test above.

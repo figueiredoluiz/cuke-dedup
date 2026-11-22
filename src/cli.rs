@@ -3,9 +3,10 @@
 use crate::analysis;
 use crate::config::{CliConfigOverrides, Config, ConfigOverrides, ReporterKind};
 use crate::discovery;
-use crate::display_text::diagnostic_safe;
+use crate::display_text::{diagnostic_safe, DiagnosticDetails};
 use crate::model::{DuplicationThreshold, Rule, Severity};
 use crate::output_file::{OutputFile, Staged};
+use crate::resource_limits::{sample_text, MAX_REPORT_FIELD_BYTES};
 use crate::source_adapter::ExtractionDiagnosticLevel;
 use crate::{gherkin, modes, reporters, source_adapter};
 use anyhow::{bail, Context, Result};
@@ -194,8 +195,8 @@ struct Invocation {
 
 #[derive(Default)]
 struct Diagnostics {
-    warnings: Vec<String>,
-    errors: Vec<String>,
+    warnings: DiagnosticDetails,
+    errors: DiagnosticDetails,
 }
 
 struct ExtractedCorpus {
@@ -204,6 +205,7 @@ struct ExtractedCorpus {
     definitions: Vec<crate::model::StepDefinition>,
     feature_steps: Vec<crate::model::FeatureStep>,
     excluded_sources: Vec<(PathBuf, source_adapter::SourceExclusion)>,
+    selected_feature_files: usize,
     definition_files_with_definitions: usize,
     parsed_feature_files: usize,
     feature_files_without_steps: usize,
@@ -218,7 +220,7 @@ struct AnalyzedCorpus {
     feature_files_without_steps: usize,
     corpus_incomplete: bool,
     run_incomplete: bool,
-    pair_records: Vec<analysis::pair_records::PairRecord>,
+    pair_records: analysis::pair_records::PairRecords,
 }
 
 struct PhaseTimings {
@@ -230,7 +232,11 @@ struct PhaseTimings {
 /// Formats a fatal error chain as one `error:` line, escaping characters that could rewrite the
 /// terminal or start a CI workflow command.
 pub fn fatal_error_line(error: &anyhow::Error) -> String {
-    format!("error: {}", diagnostic_safe(&format!("{error:#}")))
+    let message = format!("{error:#}");
+    format!(
+        "error: {}",
+        diagnostic_safe(&sample_text(&message, MAX_REPORT_FIELD_BYTES))
+    )
 }
 
 /// Parses the process arguments, runs the configured analysis, and returns its exit code.
@@ -290,15 +296,17 @@ fn execute(cli: Cli) -> Result<i32> {
     let parsing_ms = elapsed_ms(parsing_started);
     let analysis_started = Instant::now();
     let collect_pairs = options.emit_pairs.is_some();
-    let mut analyzed = analyze_corpus(config, extracted, &mut diagnostics, collect_pairs)?;
+    let mut analyzed = analyze_corpus(
+        config,
+        extracted,
+        &mut diagnostics,
+        collect_pairs,
+        analysis::UNUSED_FINDING_LIMITS,
+    )?;
     let analysis_ms = elapsed_ms(analysis_started);
-    apply_finding_modes(
-        &mut analyzed.result,
-        &files,
-        &changed_files,
-        analyzed.parsed_feature_files,
-        analyzed.feature_files_without_steps,
-    );
+    if let Some(changed) = &changed_files {
+        modes::retain_changed_findings(&mut analyzed.result.findings, changed);
+    }
     // Validated and serialized before the baseline is rewritten, so a rejected destination or a
     // failed serialization changes no file.
     let fingerprints = options
@@ -424,10 +432,11 @@ fn discovery_diagnostics(
     files: &discovery::DiscoveredFiles,
     changed_files: &Option<BTreeSet<PathBuf>>,
 ) -> Diagnostics {
-    let mut diagnostics = Diagnostics {
-        warnings: config.config_warnings.clone(),
-        errors: files.errors.clone(),
-    };
+    let mut diagnostics = Diagnostics::default();
+    diagnostics
+        .warnings
+        .extend(config.config_warnings.iter().cloned());
+    diagnostics.errors.extend(files.errors.iter().cloned());
     for pattern in &files.unmatched_feature_patterns {
         diagnostics.warnings.push(format!(
             "feature pattern `{pattern}` from {} matched no files",
@@ -517,6 +526,7 @@ fn extract_corpus(
         definitions: Vec::new(),
         feature_steps: Vec::new(),
         excluded_sources: Vec::new(),
+        selected_feature_files: files.features.len(),
         definition_files_with_definitions: 0,
         parsed_feature_files: 0,
         feature_files_without_steps: 0,
@@ -864,6 +874,7 @@ fn analyze_corpus(
     extracted: ExtractedCorpus,
     diagnostics: &mut Diagnostics,
     collect_pairs: bool,
+    unused_limits: (usize, usize),
 ) -> Result<AnalyzedCorpus> {
     let ExtractedCorpus {
         parameter_types,
@@ -872,6 +883,7 @@ fn analyze_corpus(
         feature_steps,
         // Reported during extraction; analysis works only from what survived exclusion.
         excluded_sources: _,
+        selected_feature_files,
         definition_files_with_definitions,
         parsed_feature_files,
         feature_files_without_steps,
@@ -884,10 +896,21 @@ fn analyze_corpus(
     corpus_incomplete |= !type_diagnostics.is_empty();
     diagnostics.warnings.extend(type_diagnostics);
     let config = &effective_config;
-    let mut pair_records = Vec::new();
+    let mut pair_records = analysis::pair_records::PairRecords::default();
     let sink = collect_pairs.then_some(&mut pair_records);
-    let analyzed =
-        analysis::analyze_for_cli(&indirect_usage, definitions, feature_steps, config, sink);
+    // A missing or unreadable feature corpus cannot establish that a definition is unused.
+    // A Markdown conversion can parse successfully while losing every step.
+    let evaluate_unused = selected_feature_files > 0
+        && parsed_feature_files == selected_feature_files
+        && feature_files_without_steps == 0;
+    let analyzed = analysis::analyze_for_cli(
+        &indirect_usage,
+        definitions,
+        feature_steps,
+        config,
+        sink,
+        evaluate_unused.then_some(unused_limits),
+    );
     let (analysis, census, unmatched_suppressions) = analyzed?;
     for index in unmatched_suppressions.indices {
         let suppression = &config.suppressions[index];
@@ -929,32 +952,6 @@ fn analyze_corpus(
     })
 }
 
-/// Drops unused-definition findings when a feature file failed to parse, a Gherkin Markdown file
-/// yielded no steps, or no feature file was found; then keeps only changed-file findings in
-/// changed mode.
-fn apply_finding_modes(
-    result: &mut crate::model::AnalysisResult,
-    files: &discovery::DiscoveredFiles,
-    changed_files: &Option<BTreeSet<PathBuf>>,
-    parsed_feature_files: usize,
-    feature_files_without_steps: usize,
-) {
-    // A converter can produce a syntactically valid but empty document when it fails to
-    // recognize markup or a dialect. Such an input cannot prove that a definition is unused,
-    // so use the same conservative suppression as a feature parse failure.
-    if parsed_feature_files < files.features.len()
-        || feature_files_without_steps > 0
-        || files.features.is_empty()
-    {
-        result
-            .findings
-            .retain(|finding| finding.rule != Rule::UnusedDefinition);
-    }
-    if let Some(changed) = changed_files {
-        modes::retain_changed_findings(&mut result.findings, changed);
-    }
-}
-
 /// Subtracts the findings of a baseline (a Git revision or a baseline file) from the current run.
 fn apply_baseline_mode(
     config: &Config,
@@ -984,7 +981,13 @@ fn apply_baseline_mode(
             &mut base_diagnostics,
             feature_budget,
         );
-        let mut base = analyze_corpus(&base_config, extracted, &mut base_diagnostics, false)?;
+        let base = analyze_corpus(
+            &base_config,
+            extracted,
+            &mut base_diagnostics,
+            false,
+            analysis::UNUSED_FINDING_LIMITS,
+        )?;
         // A baseline that produced a hard error, or that has definitions but no features to anchor
         // usage, cannot be subtracted at all — those always bail. A baseline that kept no
         // definitions while the current tree has some cannot match any finding, so every current
@@ -1002,8 +1005,7 @@ fn apply_baseline_mode(
                 base_diagnostics
                     .errors
                     .iter()
-                    .chain(&base_diagnostics.warnings)
-                    .cloned()
+                    .chain(base_diagnostics.warnings.iter())
                     .collect::<Vec<_>>()
                     .join("; ")
             );
@@ -1016,8 +1018,7 @@ fn apply_baseline_mode(
                 base_diagnostics
                     .errors
                     .iter()
-                    .chain(&base_diagnostics.warnings)
-                    .cloned()
+                    .chain(base_diagnostics.warnings.iter())
                     .collect::<Vec<_>>()
                     .join("; ")
             );
@@ -1027,13 +1028,6 @@ fn apply_baseline_mode(
                 "baseline revision `{revision}` is incomplete, so a finding it did not extract may appear as new; pass --fail-on-incomplete to reject an incomplete baseline"
             ));
         }
-        apply_finding_modes(
-            &mut base.result,
-            &files,
-            &None,
-            base.parsed_feature_files,
-            base.feature_files_without_steps,
-        );
         return modes::apply_reference_baseline(
             &mut result.findings,
             &base.result.findings,
@@ -1241,41 +1235,45 @@ fn write_diagnostics(
     }
     let mut stderr = io::stderr().lock();
     if options.explain_discovery {
-        write_diagnostic_line(
-            &mut stderr,
-            format_args!(
-                "cuke-dedup: feature patterns: {} ({})",
-                config.features.join(", "),
-                config.feature_pattern_origin
-            ),
-        )?;
-        for file in &files.features {
-            let relative = file.path.strip_prefix(&config.root).unwrap_or(&file.path);
-            write_diagnostic_line(
-                &mut stderr,
-                format_args!(
-                    "cuke-dedup: feature {} [{}] via {}",
-                    relative.display(),
-                    file.format.as_str(),
-                    file.pattern
-                ),
-            )?;
-        }
-        for file in &files.definitions {
-            let relative = file.path.strip_prefix(&config.root).unwrap_or(&file.path);
-            write_diagnostic_line(
-                &mut stderr,
-                format_args!("cuke-dedup: definition {}", relative.display()),
-            )?;
+        for detail in discovery_explanations(config, files).iter() {
+            write_diagnostic_line(&mut stderr, format_args!("cuke-dedup: {detail}"))?;
         }
     }
-    for warning in &diagnostics.warnings {
+    for warning in diagnostics.warnings.iter() {
         write_diagnostic_line(&mut stderr, format_args!("cuke-dedup: warning: {warning}"))?;
     }
-    for error in &diagnostics.errors {
+    for error in diagnostics.errors.iter() {
         write_diagnostic_line(&mut stderr, format_args!("cuke-dedup: {error}"))?;
     }
     Ok(())
+}
+
+/// Collects a bounded prefix of the effective patterns and discovered file explanations.
+fn discovery_explanations(
+    config: &Config,
+    files: &discovery::DiscoveredFiles,
+) -> DiagnosticDetails {
+    let mut details = DiagnosticDetails::default();
+    details.push(format!(
+        "feature patterns: {} ({})",
+        config.features.join(", "),
+        config.feature_pattern_origin
+    ));
+    let features = files.features.iter().map(|file| {
+        let relative = file.path.strip_prefix(&config.root).unwrap_or(&file.path);
+        format!(
+            "feature {} [{}] via {}",
+            relative.display(),
+            file.format.as_str(),
+            file.pattern
+        )
+    });
+    let definitions = files.definitions.iter().map(|file| {
+        let relative = file.path.strip_prefix(&config.root).unwrap_or(&file.path);
+        format!("definition {}", relative.display())
+    });
+    details.extend(features.chain(definitions));
+    details
 }
 
 /// Writes one stderr line with repository-derived text escaped, so it stays on that line.

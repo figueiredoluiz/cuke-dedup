@@ -1,4 +1,4 @@
-//! Resource limits applied while reading untrusted repository inputs.
+//! Resource limits for repository inputs, retained evidence and outputs.
 
 use anyhow::{Context, Result};
 use std::error::Error;
@@ -14,6 +14,11 @@ pub(crate) const MAX_FEATURE_STEP_SCAN_BYTES: usize = 64 * 1024 * 1024;
 pub(crate) const MAX_CONFIG_INPUT_BYTES: u64 = 1024 * 1024;
 pub(crate) const MAX_SUPPRESSION_REASON_CHARS: usize = 512;
 pub(crate) const MAX_BASELINE_INPUT_BYTES: u64 = 8 * 1024 * 1024;
+pub(crate) const MAX_UNUSED_FINDINGS: usize = 10_000;
+pub(crate) const MAX_ORACLE_RECORDS: usize = 100_000;
+pub(crate) const MAX_ORACLE_OUTPUT_BYTES: usize = 64 * 1024 * 1024;
+pub(crate) const MAX_DIAGNOSTIC_RECORDS: usize = 4_096;
+pub(crate) const MAX_DIAGNOSTIC_BYTES: usize = 1024 * 1024;
 pub(crate) const MAX_REGEX_PATTERN_BYTES: usize = 1024 * 1024;
 pub(crate) const REGEX_SIZE_LIMIT_BYTES: usize = 1024 * 1024;
 pub(crate) const REGEX_DFA_SIZE_LIMIT_BYTES: usize = 2 * 1024 * 1024;
@@ -110,7 +115,7 @@ impl<W: std::io::Write> std::io::Write for LimitedWriter<W> {
     /// Forwards a fitting write and charges only bytes actually accepted by the inner writer.
     fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
         if bytes.len() > self.remaining {
-            return Err(std::io::Error::other("buffered report byte limit exceeded"));
+            return Err(std::io::Error::other("output byte limit exceeded"));
         }
         let written = self.inner.write(bytes)?;
         self.remaining -= written;

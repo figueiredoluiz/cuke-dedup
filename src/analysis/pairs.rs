@@ -2,7 +2,7 @@ use super::evidence::{
     definition_comparison, evidence_text, handler_evidence, matcher_difference, retain_finding,
     MAX_FINDING_EVIDENCE_BYTES,
 };
-use super::pair_records::PairRecord;
+use super::pair_records::{PairRecord, PairRecords};
 use super::similarity::{
     event_overlap_available, handler_runtime_compatible, handler_similarity_with_relationship,
     is_near_matcher, is_parameterizable_matcher, matcher_similarity, matcher_words, round_score,
@@ -163,7 +163,7 @@ pub(super) fn analyze_definition_pairs(
     config: &Config,
     suppressions: &SuppressionIndex<'_>,
     findings: &mut Vec<Finding>,
-    mut records: Option<&mut Vec<PairRecord>>,
+    mut records: Option<&mut PairRecords>,
 ) -> PairAnalysis {
     let first_pair_finding = findings.len();
     let mut generated = definition_pair_candidates(definitions, config);
@@ -482,7 +482,7 @@ pub(super) fn analyze_definition_pairs(
             break;
         }
         if let Some(records) = records.as_deref_mut() {
-            records.push(PairRecord {
+            records.push(|| PairRecord {
                 left: left_index,
                 right: right_index,
                 sources: CandidateSource::ALL

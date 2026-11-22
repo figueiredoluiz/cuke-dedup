@@ -136,3 +136,27 @@ fn invisible_format_matches_the_report_ranges() {
         );
     }
 }
+
+/// Counts escaped bytes and keeps a single marker at the first refusal.
+#[test]
+fn retained_output_diagnostic_byte_limit_counts_escapes_and_line_overhead() {
+    use super::{DiagnosticDetails, DIAGNOSTIC_LINE_OVERHEAD, DIAGNOSTIC_OMISSION};
+
+    let text = "café\n";
+    let bytes = "café\\n".len() + DIAGNOSTIC_LINE_OVERHEAD;
+    let mut accepted = DiagnosticDetails::with_limits(2, bytes);
+    accepted.push(text.to_owned());
+    assert_eq!(accepted.iter().collect::<Vec<_>>(), [text]);
+
+    let mut refused = DiagnosticDetails::with_limits(2, bytes - 1);
+    refused.extend([text.to_owned(), "short".to_owned()]);
+    assert_eq!(refused.into_lines(), [DIAGNOSTIC_OMISSION]);
+
+    let mut sampled = DiagnosticDetails::with_limits(1, 64 * 1024);
+    sampled.push("界".repeat(super::MAX_REPORT_FIELD_BYTES));
+    let lines = sampled.into_lines();
+    assert_eq!(lines.len(), 1);
+    assert!(lines[0].starts_with("界"));
+    assert!(lines[0].ends_with(" bytes omitted]"));
+    assert!(lines[0].len() <= super::MAX_REPORT_FIELD_BYTES);
+}
