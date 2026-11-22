@@ -393,18 +393,26 @@ fn retained_output_oracle_overflow_keeps_both_destination_files() {
 /// Unused retention marks reports incomplete only when the feature corpus permits unused analysis.
 #[test]
 fn retained_output_unused_limit_respects_feature_input_and_reports_incompleteness() {
-    for has_feature in [false, true] {
+    let typescript = "import { Given } from '@cucumber/cucumber'; Given('rain forecast', () => grabUmbrella()); Given('receipt sent', () => recordOrder());";
+    let ruby =
+        "Given('rain forecast') { grab_umbrella() }; Given('receipt sent') { record_order() }";
+    for (filename, source, has_feature) in [
+        ("steps.ts", typescript, false),
+        ("steps.ts", typescript, true),
+        ("steps.rb", ruby, false),
+        ("steps.rb", ruby, true),
+    ] {
         let directory = tempfile::tempdir().unwrap();
         let root = directory.path();
-        std::fs::write(
-            root.join("steps.ts"),
-            "import { Given } from '@cucumber/cucumber'; Given('rain forecast', () => grabUmbrella()); Given('receipt sent', () => recordOrder());",
-        )
-        .unwrap();
+        std::fs::write(root.join(filename), source).unwrap();
         if has_feature {
             std::fs::write(root.join("empty.feature"), "Feature: Empty\n").unwrap();
         }
-        let mut config = Config::load(root, ConfigOverrides::default()).unwrap();
+        let overrides = ConfigOverrides {
+            definitions: Some(vec![filename.to_owned()]),
+            ..ConfigOverrides::default()
+        };
+        let mut config = Config::load(root, overrides).unwrap();
         config
             .rules
             .extend(Rule::ALL.iter().map(|&rule| (rule, Severity::Off)));
