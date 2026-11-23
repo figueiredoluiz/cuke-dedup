@@ -633,9 +633,15 @@ pub trait SourceAdapter: Sync + RefUnwindSafe {
         Ok(keys)
     }
 
-    /// Whether this frontend participates when no definition globs are configured.
+    /// Whether this frontend participates across the project when no definition globs are configured.
     fn discover_by_default(&self) -> bool {
         true
+    }
+
+    /// A conventional top-level directory for a standalone suite with classic Gherkin.
+    /// Frontends may use the project root to rule out other runner selection inputs.
+    fn conventional_suite_root(&self, _project: &Path) -> Option<&'static str> {
+        None
     }
 
     /// Classifies a source using this frontend's bounded input-filter policy.

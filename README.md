@@ -9,13 +9,13 @@ either one.
 
 It supports:
 
-- JavaScript, JSX, TypeScript, and TSX step definitions; experimental, opt-in Cucumber-Ruby support.
+- JavaScript, JSX, TypeScript, and TSX step definitions, plus experimental Cucumber-Ruby support.
 - Cucumber.js, Playwright-BDD, Cypress Cucumber, Jest-Cucumber, and Vitest Cucumber Plugin projects.
 - Classic `.feature` files and Gherkin Markdown `.feature.md` files.
 - Terminal, JSON, JSON Lines, HTML, and SARIF reports.
 - Thresholds, baselines, changed-file analysis, suppressions, and ignore files.
 
-Ruby support is experimental. Select a single Ruby suite explicitly with `--definitions 'features/**/*.rb' --features 'features/**/*.feature'`, include its support files, and review findings before acting on them. See the [supported subset and known limitations](docs/discovery-and-frameworks.md#cucumber-ruby).
+Ruby support is experimental. A conventional standalone Cucumber-Ruby project with its steps, support files and `.feature` files under `features/` can run `cuke-dedup` from the project root. For a different layout or a repository that also contains JS/TS sources, select the Ruby suite explicitly and include its support files. See the [supported subset and known limitations](docs/discovery-and-frameworks.md#cucumber-ruby).
 
 ## Install
 
@@ -191,7 +191,7 @@ and is distributed independently from the Cargo and npm packages.
 ## Compatibility
 
 - Building from source requires Rust 1.100 or newer. Node.js 24 LTS is recommended for the npm launcher; Node.js 20 remains the minimum compatible version and is tested in CI.
-- Definition extraction supports JavaScript and TypeScript, including JSX and common module variants, plus an explicitly selected subset of Cucumber-Ruby. See [Ruby support](docs/discovery-and-frameworks.md#cucumber-ruby).
+- Definition extraction supports JavaScript and TypeScript, including JSX and common module variants, plus a subset of Cucumber-Ruby. See [Ruby support](docs/discovery-and-frameworks.md#cucumber-ruby).
 - Static analysis cannot safely resolve every dynamic configuration, matcher, wrapper, or imported
   handler. CukeDedup reports incomplete analysis instead of treating missing evidence as clean.
 - Before version 1.0, configuration and machine-report schemas may change between minor releases.

@@ -49,6 +49,32 @@ fn outcome(files: &DiscoveredFiles) -> (Vec<usize>, Vec<(usize, String)>) {
     (edges, gaps)
 }
 
+/// Accepts the reference and its descendants and refuses siblings and ancestors by path component.
+#[test]
+fn historical_load_path_stays_inside_the_reference_checkout() {
+    let directory = tempfile::tempdir().unwrap();
+    let parent = canonical_platform_path(directory.path()).unwrap();
+    let root = parent.join("reference");
+    for (path, accepted) in [
+        (root.clone(), true),
+        (root.join("lib"), true),
+        (parent.join("reference-other"), false),
+        (parent.clone(), false),
+    ] {
+        std::fs::create_dir_all(&path).unwrap();
+        let path = canonical_platform_path(&path).unwrap();
+        let outcome = validate_reference_load_path(&root, path.clone());
+        if accepted {
+            assert_eq!(outcome.unwrap(), path);
+        } else {
+            assert_eq!(
+                outcome.unwrap_err().to_string(),
+                "historical Ruby load path resolves outside the reference root"
+            );
+        }
+    }
+}
+
 /// A load past the byte or module budget is refused, and every later new load is refused too.
 #[test]
 fn expansion_budget_refuses_past_its_limits_and_stays_exhausted() {

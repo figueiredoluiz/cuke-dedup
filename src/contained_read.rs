@@ -166,7 +166,7 @@ impl<'a> Contained<'a> {
 
 /// Compares directory identities without opening possible non-regular Unix prefixes.
 #[cfg(unix)]
-fn same_directory(left: &Path, right: &Path) -> io::Result<bool> {
+pub(crate) fn same_directory(left: &Path, right: &Path) -> io::Result<bool> {
     use std::os::unix::fs::MetadataExt;
     let (left, right) = (left.metadata()?, right.metadata()?);
     Ok(left.dev() == right.dev() && left.ino() == right.ino())
@@ -174,7 +174,7 @@ fn same_directory(left: &Path, right: &Path) -> io::Result<bool> {
 
 /// Compares directory identities through the existing same-file platform support.
 #[cfg(not(unix))]
-fn same_directory(left: &Path, right: &Path) -> io::Result<bool> {
+pub(crate) fn same_directory(left: &Path, right: &Path) -> io::Result<bool> {
     same_file::is_same_file(left, right)
 }
 

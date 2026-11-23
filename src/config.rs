@@ -231,6 +231,9 @@ pub struct Config {
     adapters: AdapterRegistry,
     /// Canonical repository root being analyzed.
     pub root: PathBuf,
+    /// Original project root when a reference snapshot supplies the analysis root.
+    #[serde(skip)]
+    reference_source_root: Option<PathBuf>,
     /// Globs selecting definition sources, or an empty list for automatic discovery.
     pub definitions: Vec<String>,
     /// Globs selecting classic Gherkin or Gherkin Markdown feature files.
@@ -285,9 +288,28 @@ pub struct Config {
     custom_exclude: Vec<String>,
     #[serde(skip)]
     output_from_project_config: bool,
+    #[serde(skip)]
+    explicit_config_file: bool,
 }
 
 impl Config {
+    /// Uses the current policy with a historical source root.
+    pub(crate) fn with_reference_root(&self, root: PathBuf) -> Self {
+        let mut config = self.clone();
+        config.reference_source_root = Some(std::mem::replace(&mut config.root, root));
+        config
+    }
+
+    /// The original project root when analyzing a reference snapshot.
+    pub(crate) fn reference_source_root(&self) -> Option<&Path> {
+        self.reference_source_root.as_deref()
+    }
+
+    /// Whether the operator explicitly selected the configuration source.
+    pub(crate) fn has_explicit_config_file(&self) -> bool {
+        self.explicit_config_file
+    }
+
     /// The configuration section adapter `name` keeps: the keys it claims, as it applied them
     /// from the configuration source, or with none when no source set them. `None` for a name that
     /// claims no keys.
@@ -362,6 +384,7 @@ impl Config {
             }
         });
         let mut config_warnings = Vec::new();
+        let explicit_config_file = explicit_config.is_some();
         let (standalone_config, standalone_path) = if let Some(path) = explicit_config {
             let text = read_utf8(&path, CONFIG_KIND, MAX_CONFIG_INPUT_BYTES)?;
             (Some(parse_raw_config(&text, &path, &adapters)?), Some(path))
@@ -384,6 +407,7 @@ impl Config {
                 .as_ref()
                 .is_some_and(|config| config.features.is_some());
         let mut config = Self::defaults(root, adapters);
+        config.explicit_config_file = explicit_config_file;
         config.config_warnings = config_warnings;
         if !has_explicit_features {
             match framework_registry::detect(&config.adapters, &config.root, package_json.as_ref())
@@ -479,6 +503,7 @@ impl Config {
             exclude: Vec::new(),
             adapters,
             root,
+            reference_source_root: None,
             definitions: Vec::new(),
             features: vec!["**/*.{feature,feature.md}".to_owned()],
             feature_pattern_origin: "built-in defaults".to_owned(),
@@ -504,6 +529,7 @@ impl Config {
             suppressions: Vec::new(),
             custom_exclude: Vec::new(),
             output_from_project_config: false,
+            explicit_config_file: false,
         }
     }
 

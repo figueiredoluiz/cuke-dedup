@@ -308,6 +308,7 @@ pub(crate) fn discover_within(
         &config.root,
         files.features.iter().map(|file| &file.path),
     )?;
+    select_conventional_suite(config, budget, &mut files)?;
     files
         .definitions
         .sort_by(|left, right| left.path.cmp(&right.path));
@@ -331,17 +332,98 @@ pub(crate) fn discover_within(
     Ok(files)
 }
 
+/// Finds the walked spelling of a conventional top-level directory without following links.
+pub(crate) fn conventional_directory<'a>(
+    root: &Path,
+    name: &str,
+    paths: impl Iterator<Item = &'a Path>,
+) -> Option<PathBuf> {
+    let literal = root.join(name);
+    if !literal
+        .symlink_metadata()
+        .is_ok_and(|metadata| metadata.is_dir())
+    {
+        return None;
+    }
+    let name = std::ffi::OsStr::new(name);
+    let mut seen = std::collections::BTreeSet::new();
+    paths
+        .filter_map(|path| path.strip_prefix(root).ok()?.iter().next())
+        .filter(|spelling| spelling.eq_ignore_ascii_case(name) && seen.insert(*spelling))
+        .map(|spelling| root.join(spelling))
+        .find(|directory| {
+            directory == &literal
+                || crate::contained_read::same_directory(directory, &literal).unwrap_or(false)
+        })
+}
+
+/// Selects a standalone conventional suite from files that already passed the walk's filters.
+fn select_conventional_suite(
+    config: &Config,
+    budget: &DiscoveryBudget,
+    files: &mut DiscoveredFiles,
+) -> Result<()> {
+    if !config.definitions.is_empty()
+        || !files.definitions.is_empty()
+        || files.features.is_empty()
+        || files.skipped_definitions.is_empty()
+    {
+        return Ok(());
+    }
+    let mut scopes = config
+        .adapters()
+        .registrations()
+        .iter()
+        .filter_map(|entry| {
+            let root = conventional_directory(
+                &config.root,
+                entry.adapter.conventional_suite_root(&config.root)?,
+                files
+                    .features
+                    .iter()
+                    .take(1)
+                    .map(|feature| feature.path.as_path()),
+            )?;
+            files
+                .features
+                .iter()
+                .all(|feature| {
+                    feature.path.starts_with(&root)
+                        && feature.path.extension().is_some_and(|ext| ext == "feature")
+                })
+                .then_some((entry.adapter.language(), root))
+        });
+    let scope = scopes
+        .next()
+        .filter(|scope| scopes.all(|other| &other == scope));
+    let Some((language, root)) = scope else {
+        return Ok(());
+    };
+    for file in std::mem::take(&mut files.skipped_definitions) {
+        if file.language == language && file.path.starts_with(&root) {
+            admit_source_bytes(budget, std::fs::symlink_metadata(&file.path).ok())?;
+            files.definitions.push(file);
+        } else {
+            files.skipped_definitions.push(file);
+        }
+    }
+    Ok(())
+}
+
 /// Charges one selected file and, when its source will be read, the bytes the bounded reader can
 /// read from it. A metadata failure charges no bytes; the reader reports that file later.
 fn admit_selected(budget: &DiscoveryBudget, entry: &ignore::DirEntry, read: bool) -> Result<()> {
     budget.spend(FILES, 1)?;
     if read {
-        let length = entry.metadata().map_or(0, |metadata| {
-            metadata.len().min(MAX_PROJECT_INPUT_BYTES + 1)
-        });
-        budget.spend(BYTES, usize::try_from(length).unwrap_or(usize::MAX))?;
+        admit_source_bytes(budget, entry.metadata().ok())?;
     }
     Ok(())
+}
+
+/// Charges bytes for a discovered source that will be read, leaving read failures to extraction.
+fn admit_source_bytes(budget: &DiscoveryBudget, metadata: Option<std::fs::Metadata>) -> Result<()> {
+    let length = metadata.map_or(0, |entry| entry.len().min(MAX_PROJECT_INPUT_BYTES + 1));
+    budget.spend(BYTES, usize::try_from(length).unwrap_or(usize::MAX))
 }
 
 /// Configured patterns, in order, that match none of `paths`; each evaluation is charged.
