@@ -1,7 +1,7 @@
 //! Bounded source-only resolution. No Ruby, gem metadata or installation hooks are executed.
 
 use super::{descendants, literal_string, syntax_error, text};
-use crate::config::{canonical_platform_path, Config};
+use crate::config::{canonical_platform_path, normalize_platform_path, Config};
 use crate::discovery::DiscoveredFiles;
 use crate::discovery::ExcludeSet;
 use crate::resource_limits::{
@@ -12,7 +12,7 @@ use crate::resource_limits::{
 use crate::source_adapter::columns::ColumnIndex;
 use crate::source_adapter::{DependencyGap, SourceDependency, SourceFile};
 use std::collections::{BTreeSet, VecDeque};
-use std::path::{Path, PathBuf};
+use std::path::{Component, Path, PathBuf};
 
 /// Resolves the Ruby source graph from the selected files into discovery's edges and gaps.
 pub(crate) fn resolve(config: &Config, excludes: &ExcludeSet, files: &mut DiscoveredFiles) {
@@ -106,6 +106,86 @@ pub(super) fn byte_limit(bytes: usize) -> String {
     }
 }
 
+/// Resolves project-local load paths against the historical copy during comparison.
+fn resolve_load_path(config: &Config, path: &Path) -> anyhow::Result<PathBuf> {
+    // On Windows, a root without a volume inherits the original project's volume. A volume
+    // without a root is drive-relative, so neither form is classified by is_absolute().
+    let rooted = matches!(
+        path.components().next(),
+        Some(Component::Prefix(_) | Component::RootDir)
+    );
+    let original = config.reference_source_root();
+    let spelling = original
+        .filter(|_| rooted)
+        .unwrap_or(&config.root)
+        .join(path);
+    let canonical = canonical_platform_path(&spelling)?;
+    let Some((original, canonical_suffix)) = original
+        .filter(|_| !canonical.starts_with(&config.root))
+        .and_then(|root| {
+            canonical
+                .strip_prefix(root)
+                .ok()
+                .map(|suffix| (root, suffix))
+        })
+    else {
+        return Ok(canonical);
+    };
+    let historical = if rooted {
+        let path = normalize_platform_path(std::path::absolute(spelling)?);
+        let relative = project_relative_spelling(&path, original).unwrap_or(canonical_suffix);
+        canonical_platform_path(&config.root.join(relative))?
+    } else {
+        canonical
+    };
+    // An absolute alias stored in the reference can still name its original project directory.
+    let source_relative = historical
+        .strip_prefix(original)
+        .ok()
+        .filter(|_| !historical.starts_with(&config.root));
+    let historical = match source_relative {
+        Some(relative) => canonical_platform_path(&config.root.join(relative))?,
+        None => historical,
+    };
+    validate_reference_load_path(&config.root, historical)
+}
+
+/// Accepts a resolved load directory only if it remains inside the reference checkout.
+fn validate_reference_load_path(root: &Path, historical: PathBuf) -> anyhow::Result<PathBuf> {
+    anyhow::ensure!(
+        historical.starts_with(root),
+        "historical Ruby load path resolves outside the reference root"
+    );
+    Ok(historical)
+}
+
+/// Checks that a relative spelling does not leave the project before re-entering it.
+fn stays_in_reference_root(suffix: &Path) -> bool {
+    suffix
+        .components()
+        .try_fold(0_usize, |depth, component| match component {
+            Component::ParentDir => depth.checked_sub(1),
+            _ => Some(depth + usize::from(matches!(component, Component::Normal(_)))),
+        })
+        .is_some()
+}
+
+/// Keeps the symlink-bearing suffix after the first matching root whose suffix stays inside it.
+fn project_relative_spelling<'a>(path: &'a Path, original: &Path) -> Option<&'a Path> {
+    let direct = path.strip_prefix(original).ok();
+    if direct.is_some_and(stays_in_reference_root) {
+        return direct;
+    }
+    // Aliases and paths that re-enter the project may spell the root differently.
+    let ancestors: Vec<_> = path.ancestors().collect();
+    ancestors.into_iter().rev().find_map(|ancestor| {
+        let relative = path.strip_prefix(ancestor).ok()?;
+        (stays_in_reference_root(relative)
+            && canonical_platform_path(ancestor).is_ok_and(|directory| directory == original))
+        .then_some(relative)
+    })
+}
+
 /// Walks the Ruby source graph from the selected files, recording each followed top-level load
 /// as an edge and each load refused by the expansion `budget` as a gap.
 fn resolve_graph(
@@ -118,8 +198,12 @@ fn resolve_graph(
     let root = config.root.clone();
     let load_paths = super::config::load_paths(config)
         .iter()
-        .map(|path| canonical_platform_path(&root.join(path)))
+        .map(|path| resolve_load_path(config, path))
         .collect::<Result<Vec<_>, _>>()?;
+    anyhow::ensure!(
+        config.has_explicit_config_file() || load_paths.iter().all(|path| path.starts_with(&root)),
+        "external Ruby load paths require an explicitly selected configuration file (--config)"
+    );
     anyhow::ensure!(
         load_paths.iter().all(|p| p.is_dir()),
         "rubyLoadPaths must contain source directories"

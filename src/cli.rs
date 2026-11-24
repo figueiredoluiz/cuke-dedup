@@ -952,6 +952,43 @@ fn analyze_corpus(
     })
 }
 
+/// Checks whether automatic selection omitted a historical suite represented in the current run.
+fn reference_skips_current_suite(
+    current: &Config,
+    reference: &Config,
+    files: &discovery::DiscoveredFiles,
+    definitions: &[crate::model::StepDefinition],
+) -> bool {
+    current.definitions.is_empty()
+        && !files.skipped_definitions.is_empty()
+        && current.adapters().registrations().iter().any(|entry| {
+            let Some(directory) = entry.adapter.conventional_suite_root(&current.root) else {
+                return false;
+            };
+            let language = entry.adapter.language();
+            discovery::conventional_directory(
+                &reference.root,
+                directory,
+                files
+                    .skipped_definitions
+                    .iter()
+                    .filter(|file| file.language == language)
+                    .map(|file| file.path.as_path()),
+            )
+            .is_some()
+                && !files
+                    .definitions
+                    .iter()
+                    .any(|file| file.language == language)
+                && definitions.iter().any(|definition| {
+                    current
+                        .adapters()
+                        .language_for_path(&definition.location.path)
+                        == Some(language)
+                })
+        })
+}
+
 /// Subtracts the findings of a baseline (a Git revision or a baseline file) from the current run.
 fn apply_baseline_mode(
     config: &Config,
@@ -970,9 +1007,13 @@ fn apply_baseline_mode(
         // still yields a sound subtraction for the findings it did extract, so it is tolerated by
         // default and reported. `--fail-on-incomplete` flows through `base_config` to surface that
         // incompleteness as an error and reject the baseline.
-        let mut base_config = config.clone();
-        base_config.root = root;
+        let base_config = config.with_reference_root(root);
         let files = discovery::discover_within(&base_config, discovery_budget)?;
+        if reference_skips_current_suite(config, &base_config, &files, &result.definitions) {
+            bail!(
+                "baseline revision `{revision}` is incomplete: the reference skipped the conventional source suite. Select it explicitly with --definitions"
+            );
+        }
         let mut base_diagnostics = discovery_diagnostics(&base_config, &files, &None);
         let extracted = extract_corpus(
             &base_config,

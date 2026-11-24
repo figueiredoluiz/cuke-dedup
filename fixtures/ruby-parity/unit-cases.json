@@ -7426,6 +7426,66 @@
           "behaviorClass": "shared-engine-invariant"
         },
         {
+          "name": "ruby_baseline_reads_project_load_paths_from_the_reference",
+          "requiredStatus": "rust-evidence",
+          "evidenceTest": {
+            "file": "tests/cli.rs",
+            "name": "ruby_baseline_reads_project_load_paths_from_the_reference"
+          },
+          "rationale": "Compares relative and absolute load paths against Git history, including changed symlink targets, and checks whether a changed Ruby provider creates a new duplicate handler.",
+          "behaviorClass": "ruby-behavior"
+        },
+        {
+          "name": "ruby_conventional_baseline_rejects_skipped_suite",
+          "requiredStatus": "rust-evidence",
+          "evidenceTest": {
+            "file": "tests/cli.rs",
+            "name": "ruby_conventional_baseline_rejects_skipped_suite"
+          },
+          "rationale": "Checks that a skipped historical conventional suite requires explicit selection, while genuinely empty history remains comparable.",
+          "behaviorClass": "ruby-behavior"
+        },
+        {
+          "name": "ruby_conventional_discovery_requires_unambiguous_runner_inputs",
+          "requiredStatus": "rust-evidence",
+          "evidenceTest": {
+            "file": "tests/cli.rs",
+            "name": "ruby_conventional_discovery_requires_unambiguous_runner_inputs"
+          },
+          "rationale": "Checks that nonconventional runner inputs require explicit source selection and that an explicit selection retains the expected duplicate handler.",
+          "behaviorClass": "ruby-behavior"
+        },
+        {
+          "name": "ruby_conventional_suite_runs_without_selection_flags",
+          "requiredStatus": "rust-evidence",
+          "evidenceTest": {
+            "file": "tests/cli.rs",
+            "name": "ruby_conventional_suite_runs_without_selection_flags"
+          },
+          "rationale": "Checks zero-argument Ruby discovery, exact step and support files, ignore handling, and the resulting unused definition.",
+          "behaviorClass": "ruby-behavior"
+        },
+        {
+          "name": "ruby_conventional_discovery_uses_directory_identity",
+          "requiredStatus": "rust-evidence",
+          "evidenceTest": {
+            "file": "tests/cli.rs",
+            "name": "ruby_conventional_discovery_uses_directory_identity"
+          },
+          "rationale": "Checks the selected Ruby definitions and findings when conventional directory spelling matches, aliases the same directory, or names a distinct directory.",
+          "behaviorClass": "ruby-behavior"
+        },
+        {
+          "name": "ruby_load_roots_require_explicit_configuration_only_when_external",
+          "requiredStatus": "rust-evidence",
+          "evidenceTest": {
+            "file": "tests/cli.rs",
+            "name": "ruby_load_roots_require_explicit_configuration_only_when_external"
+          },
+          "rationale": "Checks in-project dependencies, explicit external roots, and authorization diagnostics and report completeness for automatic configuration.",
+          "behaviorClass": "ruby-behavior"
+        },
+        {
           "name": "sarif_uris_percent_encode_reserved_file_names",
           "requiredStatus": "engine-invariant",
           "stage": "bounded-io",
@@ -8473,6 +8533,16 @@
           "stage": "bounded-io",
           "rationale": "Adapter-independent primary discovery budget: one budget sums every discovery of a run and rejects the second identical tree.",
           "behaviorClass": "shared-engine-invariant"
+        },
+        {
+          "name": "conventional_suite_charges_source_bytes_before_selection",
+          "requiredStatus": "rust-evidence",
+          "evidenceTest": {
+            "file": "src/discovery/tests/budget.rs",
+            "name": "conventional_suite_charges_source_bytes_before_selection"
+          },
+          "rationale": "Checks that automatic Ruby sources charge the discovery byte budget at its exact and one-byte-short limits.",
+          "behaviorClass": "ruby-behavior"
         },
         {
           "name": "definition_pattern_work_is_charged",

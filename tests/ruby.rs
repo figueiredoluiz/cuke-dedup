@@ -924,7 +924,13 @@ fn ruby_configured_external_load_roots_preserve_containment_and_findings() {
         let output = run_project(
             &root,
             "entry.rb",
-            &["--features", "*.feature", "--fail-on-incomplete"],
+            &[
+                "--features",
+                "*.feature",
+                "--fail-on-incomplete",
+                "--config",
+                ".cuke-dedup.json",
+            ],
         );
         let stderr = String::from_utf8(output.stderr).unwrap();
         assert_eq!(
@@ -1001,7 +1007,8 @@ fn ruby_dependency_cycles_load_order_and_exclusions_preserve_outcomes() {
             serde_json::json!({"rubyLoadPaths":paths}).to_string(),
         )
         .unwrap();
-        let rows = records(run_project(dir.path(), "entry.rb", &[]).stdout);
+        let rows =
+            records(run_project(dir.path(), "entry.rb", &["--config", ".cuke-dedup.json"]).stdout);
         assert_eq!(rows.last().unwrap()["summary"]["definitionsAnalyzed"], 2);
         assert_eq!(rows.last().unwrap()["corpus"]["incomplete"], false);
         assert_eq!(
@@ -10794,10 +10801,11 @@ fn ruby_source_loads_cannot_escape_the_analysis_root() {
             "steps.rb",
             &format!("# entry\n{load}\nGiven('entry step') {{ entry() }}\n"),
         );
-        let (code, rows, lines) = ruby_explained(
-            &root,
-            &["--definitions", "steps.rb", "--features", "*.feature"],
-        );
+        let mut args = vec!["--definitions", "steps.rb", "--features", "*.feature"];
+        if declared {
+            args.extend(["--config", ".cuke-dedup.json"]);
+        }
+        let (code, rows, lines) = ruby_explained(&root, &args);
         assert_eq!(code, 0, "{load}: {lines:?}");
         assert_eq!(lines, expected, "{load}");
         let summary = rows.last().unwrap();

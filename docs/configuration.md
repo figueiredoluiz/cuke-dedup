@@ -99,7 +99,7 @@ root-relative paths normalized with `/`.
 - Brace alternatives such as `{js,ts}` are supported.
 - Backslash escaping is supported.
 
-Opt-in languages, currently Ruby, are selected only by a `definitions` pattern that depends on
+With explicit `definitions` patterns, Ruby files are selected only by a pattern that depends on
 their suffix, such as `features/**/*.rb`. A suffix-agnostic pattern such as `features/**` selects
 JS/TS sources and reports the Ruby files it skipped in a warning. A skipped Ruby file that
 dependency resolution follows a load to (a literal top-level `require` or `require_relative`,
@@ -268,9 +268,9 @@ incomplete-corpus behavior, and [Rules](rules.md) for severity configuration.
 
 ## Ruby dependency sources
 
-Ruby dependency paths are a configuration trust boundary: absolute paths, paths containing `..`, and relative paths through symlinks may resolve outside the analysis root. A configured load-path directory is an explicitly trusted root after canonicalization, including when it is a symlink to an external directory. Only analyze trusted path configuration; discovered registration bodies from those sources may appear in report snippets. Sources are read statically, never executed.
+Automatically discovered configuration can name Ruby load-path directories inside the analysis root. CukeDedup checks the resolved directory, including for paths containing `..` or symlinks. To authorize an external load path, explicitly select the configuration file that lists it with `cuke-dedup --config <file>`. Only select a configuration file you trust. Registration bodies from those sources may appear in report snippets. Sources are read statically and never executed.
 
-`ruby.loadPaths` lists ordered local directories containing Ruby dependency sources. Paths are relative to the analysis root unless absolute. The analyzer follows direct, literal `require` and `require_relative` calls without executing Ruby or installing gems. Bare `require` names use only these declared load paths; explicit `./` paths use the analysis root. Repeated requires and cycles load each source once. Missing, excluded, dynamic, deferred or non-Ruby dependencies remain incomplete; `load` is not treated as require-once. Pin dependency source revisions outside the analyzer before using them.
+`ruby.loadPaths` lists ordered local directories containing Ruby dependency sources. Paths are relative to the analysis root unless absolute. With `--baseline-from-ref`, relative load paths and absolute load paths that resolve inside the project use the historical copy. The analyzer follows direct, literal `require` and `require_relative` calls without executing Ruby or installing gems. Bare `require` names use only these declared load paths; explicit `./` paths use the analysis root. Repeated requires and cycles load each source once. Missing, excluded, dynamic, deferred or non-Ruby dependencies remain incomplete; `load` is not treated as require-once. Pin dependency source revisions outside the analyzer before using them.
 
 ```json
 { "ruby": { "loadPaths": ["lib", "vendor/aruba/lib"] } }
@@ -278,4 +278,4 @@ Ruby dependency paths are a configuration trust boundary: absolute paths, paths 
 
 The flat `rubyLoadPaths` key is an alias for `ruby.loadPaths`. One configuration source sets either form, not both; setting both in one file is a configuration error. Other keys inside `ruby` are rejected. `--print-config` prints the effective list as `rubyLoadPaths`.
 
-Resolved files can contribute definitions outside the entrypoint globs, but cannot escape the project or explicitly declared load-path roots. An unresolved dependency must not be interpreted as a clean complete corpus.
+Resolved files can contribute definitions outside the entrypoint globs within the project or an authorized load-path root. Unresolved dependencies mark the analysis incomplete.

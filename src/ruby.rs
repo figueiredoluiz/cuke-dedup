@@ -1,4 +1,4 @@
-//! Conservative, opt-in extraction of direct Cucumber-Ruby registrations.
+//! Conservative extraction of direct Cucumber-Ruby registrations.
 
 pub(crate) mod semantics;
 
@@ -131,9 +131,27 @@ impl SourceAdapter for RubyAdapter {
         mark_unresolved_dependency_usage(&mut extraction);
         Ok(extraction)
     }
-    /// Require explicit opt-in for experimental Ruby discovery.
+    /// Keep Ruby out of project-wide automatic discovery and suffix-agnostic explicit globs.
     fn discover_by_default(&self) -> bool {
         false
+    }
+    /// Cucumber's default feature tree holds steps and support files when runner inputs stay conventional.
+    fn conventional_suite_root(&self, project: &Path) -> Option<&'static str> {
+        // A profile can replace the load list. Vendored runner plugins can add to it.
+        let other_inputs = [
+            "cucumber.yml",
+            "cucumber.yaml",
+            ".config/cucumber.yml",
+            ".config/cucumber.yaml",
+            "config/cucumber.yml",
+            "config/cucumber.yaml",
+            "vendor/gems",
+            "vendor/plugins",
+        ];
+        other_inputs
+            .iter()
+            .all(|path| !crate::contained_read::candidate_exists(&project.join(path)))
+            .then_some("features")
     }
     /// Declares Cucumber-Ruby as the one framework Ruby definitions are attributed to.
     fn framework_contracts(&self) -> &'static [crate::source_adapter::FrameworkContract] {

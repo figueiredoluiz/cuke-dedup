@@ -7218,18 +7218,28 @@ fn ruby_release_run(root: &Path, definitions: Option<&str>) -> RubyReleaseRun {
 
 /// Runs the binary on a Ruby project with JSONL output and the given extra arguments.
 fn ruby_run(root: &Path, extra: &[&str]) -> RubyReleaseRun {
-    let output = Command::cargo_bin("cuke-dedup")
-        .unwrap()
-        .arg(root)
+    let mut command = Command::cargo_bin("cuke-dedup").unwrap();
+    command.arg(root);
+    run_ruby_command(command, extra)
+}
+
+/// Runs the selected Ruby CLI command and reads its JSONL outcomes.
+fn run_ruby_command(mut command: Command, extra: &[&str]) -> RubyReleaseRun {
+    let output = command
         .args(["--reporters", "jsonl", "--no-metrics"])
         .args(extra)
         .output()
         .unwrap();
-    let rows: Vec<Value> = String::from_utf8_lossy(&output.stdout)
-        .lines()
-        .map(|line| serde_json::from_str(line).unwrap())
-        .collect();
-    let summary = rows.iter().find(|row| row["type"] == "summary").unwrap();
+    let rows = ruby_report_rows(&output.stdout);
+    let summary = rows
+        .iter()
+        .find(|row| row["type"] == "summary")
+        .unwrap_or_else(|| {
+            panic!(
+                "missing Ruby summary: {}",
+                String::from_utf8_lossy(&output.stderr)
+            )
+        });
     let rules = |active: bool| {
         rows.iter()
             .filter(|row| row["type"] == "finding" && row["active"] == active)
@@ -7244,6 +7254,14 @@ fn ruby_run(root: &Path, extra: &[&str]) -> RubyReleaseRun {
         suppressed: rules(false),
         stderr: String::from_utf8_lossy(&output.stderr).into_owned(),
     }
+}
+
+/// Parses the Ruby CLI's JSONL output, requiring one JSON value on each line.
+fn ruby_report_rows(stdout: &[u8]) -> Vec<Value> {
+    String::from_utf8_lossy(stdout)
+        .lines()
+        .map(|line| serde_json::from_str(line).unwrap())
+        .collect()
 }
 
 const RUBY_RELEASE_FEATURE: &str =
@@ -7262,7 +7280,298 @@ fn ruby_release_prelude_run(prelude: &str) -> RubyReleaseRun {
     ruby_release_run(directory.path(), Some("*.rb"))
 }
 
-/// Checks broad patterns preserve TypeScript selection, Ruby requires suffix opt-in, and mixed explicit selections fail.
+/// A conventional Ruby suite includes support registrations and honors discovery exclusions.
+#[test]
+fn ruby_conventional_suite_runs_without_selection_flags() {
+    let directory = tempfile::tempdir().unwrap();
+    let root = directory.path();
+    write(
+        root,
+        "features/bookings.feature",
+        "Feature: Booking\n  Scenario: Arrival\n    Given a booking is active\n",
+    );
+    write(
+        root,
+        "features/step_definitions/booking.rb",
+        "Given('a booking is active') { check_booking }\n",
+    );
+    write(
+        root,
+        "features/support/gate.rb",
+        "# Fixture support registration.\n\nGiven('the cargo gate is locked') { check_gate }\n",
+    );
+    write(
+        root,
+        "features/support/ignored.rb",
+        "Given('ignored fixture registration') { ignored_step }\n",
+    );
+    write(root, ".cuke-dedupignore", "features/support/ignored.rb\n");
+    write(
+        root,
+        "sandbox/example.rb",
+        "Given('unrelated fixture registration') { sample_step }\n",
+    );
+
+    Command::cargo_bin("cuke-dedup")
+        .unwrap()
+        .current_dir(root)
+        .assert()
+        .success()
+        .stdout(predicate::str::contains(
+            "Analyzed 2 definitions and 1 feature step",
+        ));
+
+    let output = Command::cargo_bin("cuke-dedup")
+        .unwrap()
+        .current_dir(root)
+        .args([
+            "--reporters",
+            "jsonl",
+            "--no-metrics",
+            "--explain-discovery",
+        ])
+        .output()
+        .unwrap();
+    assert_eq!(output.status.code(), Some(0));
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    let selected: Vec<_> = stderr
+        .lines()
+        .filter_map(|line| line.strip_prefix("cuke-dedup: definition "))
+        .map(|path| path.replace('\\', "/"))
+        .collect();
+    assert_eq!(
+        selected,
+        [
+            "features/step_definitions/booking.rb",
+            "features/support/gate.rb"
+        ]
+    );
+    let rows = ruby_report_rows(&output.stdout);
+    let summary = rows.last().unwrap();
+    assert_eq!(summary["type"], "summary");
+    assert_eq!(summary["corpus"]["incomplete"], false);
+    assert_eq!(summary["analysis"]["truncated"], false);
+    assert_eq!(summary["findingsTruncated"], 0);
+    assert_eq!(rows.len(), 2);
+    assert_eq!(rows[0]["rule"], "unused-definition");
+    assert_eq!(rows[0]["active"], true);
+    assert_eq!(rows[0]["primary"]["path"], "features/support/gate.rb");
+    assert_eq!(rows[0]["primary"]["line"], 3);
+}
+
+/// Custom runner inputs and features outside the suite leave explicit Ruby selection available.
+#[test]
+fn ruby_conventional_discovery_requires_unambiguous_runner_inputs() {
+    for (path, content) in [
+        ("cucumber.yml", "default: --require custom"),
+        ("config/cucumber.yaml", "default: --require custom"),
+        (".config/cucumber.yml", "default: --require custom"),
+        (
+            "vendor/plugins/plugin/cucumber/setup.rb",
+            "# plugin support",
+        ),
+        ("other/independent.feature", RUBY_RELEASE_FEATURE),
+    ] {
+        let directory = tempfile::tempdir().unwrap();
+        let root = directory.path();
+        write(root, "features/steps.rb", RUBY_RELEASE_STEPS);
+        write(root, "features/suite.feature", RUBY_RELEASE_FEATURE);
+        write(root, path, content);
+
+        let default = ruby_release_run(root, None);
+        assert_eq!(default.definitions, 0, "{path}");
+        assert!(
+            default.stderr.contains("need a definition pattern"),
+            "{path}: {}",
+            default.stderr
+        );
+        let explicit = ruby_run(
+            root,
+            &[
+                "--definitions",
+                "features/**/*.rb",
+                "--features",
+                "features/**/*.feature",
+            ],
+        );
+        assert_eq!(explicit.definitions, 2, "{path}");
+        assert!(!explicit.incomplete, "{path}: {}", explicit.stderr);
+        assert_eq!(explicit.active, ["duplicate-handler"], "{path}");
+    }
+}
+
+/// Uses filesystem directory identity to select conventional source even when its stored case differs.
+#[test]
+fn ruby_conventional_discovery_uses_directory_identity() {
+    for (spelling, add_lowercase) in [("features", false), ("Features", false), ("Features", true)]
+    {
+        let directory = tempfile::tempdir().unwrap();
+        let root = directory.path();
+        write(
+            root,
+            &format!("{spelling}/suite.feature"),
+            RUBY_RELEASE_FEATURE,
+        );
+        write(root, &format!("{spelling}/steps.rb"), RUBY_RELEASE_STEPS);
+        let conventional = root.join("features").is_dir();
+        if add_lowercase {
+            fs::create_dir_all(root.join("features")).unwrap();
+        }
+        let run = ruby_run(root, &[]);
+        assert_eq!(
+            run.definitions,
+            if conventional { 2 } else { 0 },
+            "{spelling} add_lowercase={add_lowercase}: {}",
+            run.stderr
+        );
+        let expected: &[&str] = if conventional {
+            &["duplicate-handler"]
+        } else {
+            &[]
+        };
+        assert_eq!(
+            run.active, expected,
+            "{spelling} add_lowercase={add_lowercase}"
+        );
+    }
+}
+
+/// Rejects an unselected historical Ruby suite while preserving explicit and empty-history comparisons.
+#[test]
+fn ruby_conventional_baseline_rejects_skipped_suite() {
+    let directory = tempfile::tempdir().unwrap();
+    let root = directory.path();
+    write(root, "examples/helper.rb", "# unrelated Ruby source\n");
+    init_repository(root);
+    write(root, "Features/suite.feature", RUBY_RELEASE_FEATURE);
+    write(root, "Features/steps.rb", RUBY_RELEASE_STEPS);
+    let suite = if root.join("features").is_dir() {
+        "Features"
+    } else {
+        fs::rename(root.join("Features"), root.join("features")).unwrap();
+        "features"
+    };
+    let ruby_glob = format!("{suite}/**/*.rb");
+    write(root, "cucumber.yml", "default: --require features");
+    let commit = |message: &str| {
+        for args in [["add", "-A", "."], ["commit", "-qm", message]] {
+            assert!(fixture_git()
+                .current_dir(root)
+                .args(args)
+                .status()
+                .unwrap()
+                .success());
+        }
+    };
+    commit("Ruby suite with profile");
+    write(
+        root,
+        &format!("{suite}/side.ts"),
+        "Given('side', () => work());\n",
+    );
+    commit("Additional language");
+    fs::remove_file(root.join("cucumber.yml")).unwrap();
+    fs::remove_file(root.join(suite).join("side.ts")).unwrap();
+    commit("Standalone Ruby suite");
+
+    for reference in ["HEAD~1", "HEAD~2"] {
+        Command::cargo_bin("cuke-dedup")
+            .unwrap()
+            .current_dir(root)
+            .args(["--baseline-from-ref", reference, "--fail-on-incomplete"])
+            .assert()
+            .code(2)
+            .stderr(predicate::str::contains(
+                "reference skipped the conventional source suite",
+            ));
+        let explicit = ruby_run(
+            root,
+            &[
+                "--baseline-from-ref",
+                reference,
+                "--definitions",
+                &ruby_glob,
+            ],
+        );
+        assert_eq!(explicit.code, Some(0), "{}", explicit.stderr);
+        assert_eq!(explicit.suppressed, ["duplicate-handler"]);
+    }
+    let empty = ruby_run(root, &["--baseline-from-ref", "HEAD~3"]);
+    assert_eq!(empty.code, Some(1), "{}", empty.stderr);
+    assert_eq!(empty.active, ["duplicate-handler"]);
+}
+
+/// Project configuration stays usable in-root and an explicitly selected file can authorize an external Ruby load path.
+#[test]
+fn ruby_load_roots_require_explicit_configuration_only_when_external() {
+    for (kind, load_path, extra, authorized) in [
+        ("standalone", "lib", &[][..], true),
+        ("package", "lib", &[][..], true),
+        ("standalone", "../provider", &[][..], false),
+        ("package", "../provider", &[][..], false),
+        (
+            "standalone",
+            "../provider",
+            &["--definitions", "features/**/*.rb"][..],
+            false,
+        ),
+        (
+            "standalone",
+            "../provider",
+            &["--config", ".cuke-dedup.json"][..],
+            true,
+        ),
+    ] {
+        let sandbox = tempfile::tempdir().unwrap();
+        let root = sandbox.path().join("project");
+        write(
+            &root,
+            "features/booking.feature",
+            "Feature: Booking\n  Scenario: Check in\n    Given a booking exists\n    And the parcel is ready\n",
+        );
+        write(
+            &root,
+            "features/steps.rb",
+            "require 'provider'\nGiven('a booking exists') { check_booking }\n",
+        );
+        write(
+            &root,
+            &format!("{load_path}/provider.rb"),
+            "Given('the parcel is ready') { check_parcel }\n",
+        );
+        let (file, config) = if kind == "package" {
+            (
+                "package.json",
+                serde_json::json!({"cukeDedup": {"rubyLoadPaths": [load_path]}}),
+            )
+        } else {
+            (
+                ".cuke-dedup.json",
+                serde_json::json!({"ruby": {"loadPaths": [load_path]}}),
+            )
+        };
+        write(&root, file, &config.to_string());
+
+        let mut arguments = vec!["--explain-discovery"];
+        arguments.extend(extra);
+        let run = ruby_run(&root, &arguments);
+        let case = format!("{kind} {load_path} {extra:?}: {}", run.stderr);
+        assert_eq!(run.code, Some(if authorized { 0 } else { 2 }), "{case}");
+        assert_eq!(run.definitions, if authorized { 2 } else { 1 }, "{case}");
+        assert_eq!(run.incomplete, !authorized, "{case}");
+        assert_eq!(run.stderr.contains("provider.rb"), authorized, "{case}");
+        assert_eq!(
+            run.stderr.contains(
+                "external Ruby load paths require an explicitly selected configuration file"
+            ),
+            !authorized,
+            "{case}"
+        );
+        assert!(run.active.is_empty(), "{case}");
+    }
+}
+
+/// Checks broad patterns preserve TypeScript selection, Ruby requires suffix opt-in for explicit patterns, and mixed explicit selections fail.
 #[test]
 fn regression_ruby_release_broad_glob_keeps_typescript_selection() {
     let directory = tempfile::tempdir().unwrap();
@@ -7313,7 +7622,7 @@ fn regression_ruby_release_broad_glob_keeps_typescript_selection() {
     for (pattern, definitions, skipped) in [
         (Some("features/**/*"), 0, true),
         (Some("features/**/*.rb"), 2, false),
-        (None, 0, true),
+        (None, 2, false),
     ] {
         let run = ruby_release_run(ruby_only.path(), pattern);
         assert_eq!(run.definitions, definitions, "{pattern:?}");
@@ -7919,6 +8228,129 @@ fn regression_ruby_provider_proofs_missing_for_other_reasons_do_not_blame_the_li
         run.stderr
     );
     assert!(!run.stderr.contains("proof limit"), "{}", run.stderr);
+}
+
+/// Project-local Ruby paths read the provider from the reference, even when configured as absolute.
+#[test]
+fn ruby_baseline_reads_project_load_paths_from_the_reference() {
+    let directory = tempfile::tempdir().unwrap();
+    let project = directory.path().join("project");
+    let root = project.as_path();
+    write(root, "features/suite.feature", RUBY_RELEASE_FEATURE);
+    write(
+        root,
+        "features/steps.rb",
+        "require 'provider'\nGiven('same') { work(1) }\n",
+    );
+    write(root, "lib/provider.rb", "Given('other') { different() }\n");
+    #[cfg(unix)]
+    let (project_alias, provider_alias) = {
+        use std::os::unix::fs::symlink;
+        let project_alias = directory.path().join("project-alias");
+        let provider_alias = directory.path().join("provider-alias");
+        write(root, "current/provider.rb", "Given('other') { work(1) }\n");
+        symlink(root, &project_alias).unwrap();
+        symlink(root.join("lib"), &provider_alias).unwrap();
+        symlink("lib", root.join("selected")).unwrap();
+        symlink(root.join("lib"), root.join("absolute-selected")).unwrap();
+        (project_alias, provider_alias)
+    };
+    init_repository(root);
+    write(root, "lib/provider.rb", "Given('other') { work(1) }\n");
+    #[cfg(unix)]
+    {
+        fs::remove_file(root.join("selected")).unwrap();
+        std::os::unix::fs::symlink("current", root.join("selected")).unwrap();
+    }
+    assert!(fixture_git()
+        .current_dir(root)
+        .args(["commit", "-qam", "Update provider"])
+        .status()
+        .unwrap()
+        .success());
+
+    #[cfg(windows)]
+    let [rooted, drive_relative] = {
+        use std::path::{Component, PathBuf, Prefix};
+        let full = root.join("lib");
+        let mut components = full.components();
+        let Some(Component::Prefix(prefix)) = components.next() else {
+            panic!("temporary directory has no Windows volume");
+        };
+        let rooted: PathBuf = components.collect();
+        let drive_relative = match prefix.kind() {
+            Prefix::Disk(letter) | Prefix::VerbatimDisk(letter) => {
+                PathBuf::from(format!("{}:lib", char::from(letter)))
+            }
+            _ => full,
+        };
+        [rooted, drive_relative]
+    };
+
+    for (path, explicit) in [
+        (Path::new("lib").to_path_buf(), false),
+        (root.join("lib"), false),
+        (root.join("lib"), true),
+        (root.join("../project/lib"), false),
+        #[cfg(windows)]
+        (rooted, false),
+        #[cfg(windows)]
+        (drive_relative, false),
+        #[cfg(unix)]
+        (Path::new("selected").to_path_buf(), false),
+        #[cfg(unix)]
+        (Path::new("absolute-selected").to_path_buf(), false),
+        #[cfg(unix)]
+        (root.join("absolute-selected"), false),
+        #[cfg(unix)]
+        (root.canonicalize().unwrap().join("selected"), false),
+        #[cfg(unix)]
+        (root.canonicalize().unwrap().join("lib/../selected"), false),
+        #[cfg(unix)]
+        (
+            root.canonicalize().unwrap().join("../project/selected"),
+            false,
+        ),
+        #[cfg(unix)]
+        (project_alias.join("selected"), false),
+        #[cfg(unix)]
+        (provider_alias, false),
+    ] {
+        write(
+            root,
+            ".cuke-dedup.json",
+            &serde_json::json!({"rubyLoadPaths": [path]}).to_string(),
+        );
+        for (reference, active) in [("HEAD~1", true), ("HEAD", false)] {
+            let mut arguments = vec!["--baseline-from-ref", reference, "--fail-on-incomplete"];
+            if explicit {
+                arguments.extend(["--config", ".cuke-dedup.json"]);
+            }
+            let mut command = Command::cargo_bin("cuke-dedup").unwrap();
+            command.current_dir(root);
+            let run = run_ruby_command(command, &arguments);
+            let case = format!(
+                "{} explicit={explicit} {reference}: {}",
+                path.display(),
+                run.stderr
+            );
+            assert_eq!(run.code, Some(i32::from(active)), "{case}");
+            assert_eq!(run.definitions, 2, "{case}");
+            assert!(!run.incomplete, "{case}");
+            assert_eq!(
+                run.active.iter().any(|rule| rule == "duplicate-handler"),
+                active,
+                "{case}"
+            );
+            assert_eq!(
+                run.suppressed
+                    .iter()
+                    .any(|rule| rule == "duplicate-handler"),
+                !active,
+                "{case}"
+            );
+        }
+    }
 }
 
 /// Commits a Ruby suite with support file `base_env` at HEAD~1, then switches it to `head_env`

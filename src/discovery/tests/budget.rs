@@ -142,6 +142,38 @@ fn generated_discovery_admits_exact_totals_and_rejects_one_less() {
     });
 }
 
+/// Automatic suite selection admits its source bytes once and leaves unrelated Ruby unread.
+#[test]
+fn conventional_suite_charges_source_bytes_before_selection() {
+    let directory = tempfile::tempdir().unwrap();
+    let root = directory.path();
+    fs::create_dir(root.join("features")).unwrap();
+    let feature = "Feature: Budget\n  Scenario: Step\n    Given ready\n";
+    let steps = "Given('ready') { work }\n";
+    fs::write(root.join("features/budget.feature"), feature).unwrap();
+    fs::write(root.join("features/steps.rb"), steps).unwrap();
+    fs::write(root.join("unrelated.rb"), steps).unwrap();
+    let config = Config::load(root, ConfigOverrides::default()).unwrap();
+    let bytes = feature.len() + steps.len();
+    let limits = |bytes| [usize::MAX, 3, bytes, usize::MAX];
+    let admitted = DiscoveryBudget::testing(limits(bytes));
+    let files = discover_within(&config, &admitted).unwrap();
+    assert_eq!(
+        files.definitions[0].path,
+        config.root.join("features/steps.rb")
+    );
+    assert_eq!(
+        files.skipped_definitions[0].path,
+        config.root.join("unrelated.rb")
+    );
+    assert_eq!(&admitted.spent()[1..3], &[3, bytes]);
+    let refused = DiscoveryBudget::testing(limits(bytes - 1));
+    assert!(discover_within(&config, &refused)
+        .unwrap_err()
+        .to_string()
+        .contains("selected source bytes"));
+}
+
 /// Excluded and gitignored subtrees cost their own entry at most, however many files they hold.
 #[test]
 fn pruned_subtrees_are_not_charged_for_their_contents() {

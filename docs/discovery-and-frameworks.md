@@ -31,6 +31,6 @@ What marks a corpus incomplete, how reports expose it, and the flags that turn i
 
 ## Cucumber-Ruby
 
-Experimental, opt-in Ruby support: selection, trust withdrawal, registrations and providers, handler and assertion evidence, matcher translation, ownership, dependencies, usage and parameter types. Details: [discovery/cucumber-ruby.md](discovery/cucumber-ruby.md).
+Experimental Ruby support covers default discovery for standalone conventional suites, explicit selection, registrations, and static dependency analysis. [Cucumber-Ruby support](discovery/cucumber-ruby.md)
 
 Sections: [Registrations and providers](discovery/cucumber-ruby.md#registrations-and-providers), [Handlers and assertion evidence](discovery/cucumber-ruby.md#handlers-and-assertion-evidence), [Matchers](discovery/cucumber-ruby.md#matchers), [Ownership, dependencies and usage](discovery/cucumber-ruby.md#ownership-dependencies-and-usage), [Parameter types](discovery/cucumber-ruby.md#parameter-types).
