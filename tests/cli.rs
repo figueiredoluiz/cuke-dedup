@@ -7231,7 +7231,15 @@ fn run_ruby_command(mut command: Command, extra: &[&str]) -> RubyReleaseRun {
         .output()
         .unwrap();
     let rows = ruby_report_rows(&output.stdout);
-    let summary = rows.iter().find(|row| row["type"] == "summary").unwrap();
+    let summary = rows
+        .iter()
+        .find(|row| row["type"] == "summary")
+        .unwrap_or_else(|| {
+            panic!(
+                "missing Ruby summary: {}",
+                String::from_utf8_lossy(&output.stderr)
+            )
+        });
     let rules = |active: bool| {
         rows.iter()
             .filter(|row| row["type"] == "finding" && row["active"] == active)
@@ -8244,6 +8252,7 @@ fn ruby_baseline_reads_project_load_paths_from_the_reference() {
         symlink(root, &project_alias).unwrap();
         symlink(root.join("lib"), &provider_alias).unwrap();
         symlink("lib", root.join("selected")).unwrap();
+        symlink(root.join("lib"), root.join("absolute-selected")).unwrap();
         (project_alias, provider_alias)
     };
     init_repository(root);
@@ -8289,6 +8298,10 @@ fn ruby_baseline_reads_project_load_paths_from_the_reference() {
         (drive_relative, false),
         #[cfg(unix)]
         (Path::new("selected").to_path_buf(), false),
+        #[cfg(unix)]
+        (Path::new("absolute-selected").to_path_buf(), false),
+        #[cfg(unix)]
+        (root.join("absolute-selected"), false),
         #[cfg(unix)]
         (root.canonicalize().unwrap().join("selected"), false),
         #[cfg(unix)]

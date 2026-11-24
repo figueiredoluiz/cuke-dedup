@@ -106,29 +106,47 @@ pub(super) fn byte_limit(bytes: usize) -> String {
     }
 }
 
-/// Resolves project-local absolute load paths against the historical copy during comparison.
+/// Resolves project-local load paths against the historical copy during comparison.
 fn resolve_load_path(config: &Config, path: &Path) -> anyhow::Result<PathBuf> {
     // On Windows, a root without a volume inherits the original project's volume. A volume
     // without a root is drive-relative, so neither form is classified by is_absolute().
-    let original = config.reference_source_root().filter(|_| {
-        matches!(
-            path.components().next(),
-            Some(Component::Prefix(_) | Component::RootDir)
-        )
-    });
-    let spelling = original.unwrap_or(&config.root).join(path);
+    let rooted = matches!(
+        path.components().next(),
+        Some(Component::Prefix(_) | Component::RootDir)
+    );
+    let original = config.reference_source_root();
+    let spelling = original
+        .filter(|_| rooted)
+        .unwrap_or(&config.root)
+        .join(path);
     let canonical = canonical_platform_path(&spelling)?;
-    let Some((original, canonical_suffix)) = original.and_then(|root| {
-        canonical
-            .strip_prefix(root)
-            .ok()
-            .map(|suffix| (root, suffix))
-    }) else {
+    let Some((original, canonical_suffix)) = original
+        .filter(|_| !canonical.starts_with(&config.root))
+        .and_then(|root| {
+            canonical
+                .strip_prefix(root)
+                .ok()
+                .map(|suffix| (root, suffix))
+        })
+    else {
         return Ok(canonical);
     };
-    let path = normalize_platform_path(std::path::absolute(spelling)?);
-    let relative = project_relative_spelling(&path, original).unwrap_or(canonical_suffix);
-    let historical = canonical_platform_path(&config.root.join(relative))?;
+    let historical = if rooted {
+        let path = normalize_platform_path(std::path::absolute(spelling)?);
+        let relative = project_relative_spelling(&path, original).unwrap_or(canonical_suffix);
+        canonical_platform_path(&config.root.join(relative))?
+    } else {
+        canonical
+    };
+    // An absolute alias stored in the reference can still name its original project directory.
+    let source_relative = historical
+        .strip_prefix(original)
+        .ok()
+        .filter(|_| !historical.starts_with(&config.root));
+    let historical = match source_relative {
+        Some(relative) => canonical_platform_path(&config.root.join(relative))?,
+        None => historical,
+    };
     validate_reference_load_path(&config.root, historical)
 }
 
