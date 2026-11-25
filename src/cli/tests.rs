@@ -40,12 +40,180 @@ fn finalization_failure_discards_provisional_definitions_and_reports_incompleten
         &config,
         corpus,
         &mut diagnostics,
-        false,
+        None,
         analysis::UNUSED_FINDING_LIMITS,
     )
     .unwrap();
     assert!(analyzed.run_incomplete);
     assert!(analyzed.result.findings.is_empty());
+}
+
+/// Keeps loading diagnostics in their suite and applies required-input flags to mixed extraction.
+#[test]
+fn mixed_extraction_requires_proven_feature_ownership_and_definitions() {
+    let directory = tempfile::tempdir().unwrap();
+    let mut config = Config::load(directory.path(), ConfigOverrides::default()).unwrap();
+    let ruby_path = config.root.join("steps.rb");
+    let js_path = config.root.join("steps.ts");
+    let feature_path = config.root.join("shared.feature");
+    std::fs::write(
+        &feature_path,
+        "Feature: Shared suite\n  Scenario: Steps\n    Given step\n",
+    )
+    .unwrap();
+    let feature = discovery::FeatureFile {
+        path: feature_path,
+        format: gherkin::FeatureFormat::Gherkin,
+        pattern: "shared.feature".to_owned(),
+        owner: discovery::FeatureOwner::Unresolved,
+    };
+    let mut files = discovery::DiscoveredFiles {
+        mixed_suite: Some(discovery::MixedSuite {
+            conventional_language: crate::ruby::RUBY,
+        }),
+        definitions: vec![
+            source_adapter::SourceFile {
+                path: ruby_path.clone(),
+                language: crate::ruby::RUBY,
+            },
+            source_adapter::SourceFile {
+                path: js_path.clone(),
+                language: TYPESCRIPT,
+            },
+        ],
+        features: vec![feature],
+        dependency_gaps: vec![source_adapter::DependencyGap::new(
+            crate::model::SourceLocation::new(&ruby_path, 2, 1, 2, 30),
+            "fixture support load was not admitted",
+        )],
+        ..Default::default()
+    };
+
+    for (require_inputs, with_registrations) in [(false, false), (true, false), (true, true)] {
+        config.require_features = require_inputs;
+        config.require_definitions = require_inputs;
+        let matcher = if with_registrations {
+            "'step'"
+        } else {
+            "dynamic"
+        };
+        let ruby = format!("# fixture\nrequire_relative 'support'\nGiven({matcher}) {{ work }}\n");
+        std::fs::write(&ruby_path, ruby).unwrap();
+        std::fs::write(
+            &js_path,
+            format!(
+                "import {{ Given }} from '@cucumber/cucumber'; Given({matcher}, () => work());"
+            ),
+        )
+        .unwrap();
+
+        let mut diagnostics = Diagnostics::default();
+        let corpora = extract_selected_corpora(
+            &config,
+            &files,
+            &None,
+            &mut diagnostics,
+            &mut gherkin::FeatureStepBudget::default(),
+        );
+        assert_eq!(corpora.len(), 2);
+        assert!(corpora.iter().all(|corpus| {
+            corpus.feature_ownership_incomplete
+                && corpus.incomplete
+                && corpus.selected_feature_files == 0
+                && corpus.feature_steps.is_empty()
+        }));
+        assert_eq!(
+            corpora
+                .iter()
+                .map(|corpus| corpus.definitions.len())
+                .sum::<usize>(),
+            usize::from(with_registrations) * 2,
+        );
+        assert_eq!(
+            diagnostics
+                .errors
+                .iter()
+                .any(|error| error.contains("unresolved feature ownership")),
+            require_inputs,
+        );
+        assert_eq!(
+            diagnostics
+                .warnings
+                .iter()
+                .any(|warning| warning.contains("unresolved feature ownership")),
+            !require_inputs,
+        );
+        assert_eq!(
+            diagnostics
+                .errors
+                .iter()
+                .any(|error| error == "definition extraction produced 0 definitions"),
+            require_inputs && !with_registrations,
+        );
+        let gaps: Vec<_> = diagnostics
+            .warnings
+            .iter()
+            .filter(|warning| warning.contains("fixture support load was not admitted"))
+            .collect();
+        assert_eq!(gaps.len(), 1);
+        assert!(gaps[0].contains("steps.rb:2:"), "{gaps:?}");
+    }
+
+    files.features[0].owner = discovery::FeatureOwner::Conventional;
+    let corpora = extract_selected_corpora(
+        &config,
+        &files,
+        &None,
+        &mut Diagnostics::default(),
+        &mut gherkin::FeatureStepBudget::default(),
+    );
+    assert!(!corpora[0].feature_ownership_incomplete);
+    assert_eq!(corpora[0].selected_feature_files, 1);
+    let [step] = corpora[0].feature_steps.as_slice() else {
+        panic!("the conventional scope should read the known-owner feature");
+    };
+    assert_eq!(step.text, "step");
+    assert!(corpora[1].feature_steps.is_empty());
+}
+
+/// A reference without discovered definition sources supplies no scope to validate.
+#[test]
+fn mixed_reference_ignores_unselected_domains() {
+    let directory = tempfile::tempdir().unwrap();
+    let config = Config::load(directory.path(), ConfigOverrides::default()).unwrap();
+    let mut diagnostics = Diagnostics::default();
+    let mut feature_budget = gherkin::FeatureStepBudget::default();
+    let mut files = discovery::DiscoveredFiles::default();
+    let absent = extract_corpus(
+        &config,
+        &files,
+        &None,
+        &mut diagnostics,
+        &mut feature_budget,
+    );
+    assert!(absent.definition_domain.is_none());
+    validate_mixed_reference_scopes("HEAD", None, std::slice::from_ref(&absent), &[]).unwrap();
+
+    let path = config.root.join("steps.ts");
+    std::fs::write(&path, "Given('selected', () => work());").unwrap();
+    files.definitions.push(source_adapter::SourceFile {
+        path,
+        language: TYPESCRIPT,
+    });
+    let selected = extract_corpus(
+        &config,
+        &files,
+        &None,
+        &mut diagnostics,
+        &mut feature_budget,
+    );
+    let error = validate_mixed_reference_scopes("HEAD", None, &[absent, selected], &[])
+        .unwrap_err()
+        .to_string();
+    assert!(
+        error.contains("the configured suite has no discovered feature files"),
+        "{error}"
+    );
 }
 
 /// Color requires a TTY and is disabled by a non-empty `NO_COLOR`, but not by an empty one.
@@ -439,7 +607,7 @@ fn retained_output_unused_limit_respects_feature_input_and_reports_incompletenes
         );
         assert_eq!(extracted.definitions.len(), 2);
         let mut analyzed =
-            analyze_corpus(&config, extracted, &mut diagnostics, false, (1, usize::MAX)).unwrap();
+            analyze_corpus(&config, extracted, &mut diagnostics, None, (1, usize::MAX)).unwrap();
         assert_eq!(analyzed.result.findings.len(), usize::from(has_feature));
         assert_eq!(analyzed.run_incomplete, has_feature);
         assert!(!analyzed.corpus_incomplete);
@@ -447,8 +615,7 @@ fn retained_output_unused_limit_respects_feature_input_and_reports_incompletenes
         let outcome = apply_baseline_mode(
             &config,
             &options,
-            &mut analyzed.result,
-            analyzed.run_incomplete,
+            &mut analyzed,
             &mut diagnostics,
             &mut feature_budget,
             &discovery_budget,

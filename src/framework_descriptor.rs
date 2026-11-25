@@ -13,7 +13,7 @@ use std::path::{Path, PathBuf};
 use yaml_serde::Value as YamlValue;
 
 const CUCUMBER_STEM: &str = "cucumber";
-type StructuredPaths = fn(&str) -> Result<LiteralProperty>;
+type StructuredPaths = fn(&str) -> Result<(LiteralProperty, bool)>;
 const CUCUMBER_STRUCTURED_CONFIGS: [(&str, StructuredPaths); 3] = [
     ("cucumber.json", cucumber_json_paths),
     ("cucumber.yaml", cucumber_yaml_paths),
@@ -29,6 +29,7 @@ pub(crate) struct FrameworkFeatures {
     pub(crate) source: PathBuf,
     pub(crate) framework: &'static str,
     pub(crate) warnings: Vec<String>,
+    pub(crate) proves_ownership: bool,
 }
 
 /// Feature patterns one configuration file, or other project evidence, yields: the glob patterns
@@ -43,6 +44,7 @@ pub struct DiscoveredFeatures {
     pub(crate) patterns: Vec<String>,
     pub(crate) source: PathBuf,
     pub(crate) warnings: Vec<String>,
+    literal_default_paths: bool,
 }
 
 impl DiscoveredFeatures {
@@ -52,6 +54,7 @@ impl DiscoveredFeatures {
             patterns,
             source,
             warnings: Vec::new(),
+            literal_default_paths: false,
         }
     }
 
@@ -190,11 +193,13 @@ pub(crate) fn detect<'d>(
                     .map(|pattern| root_relative(pattern))
                     .collect()
             };
+            let proves_ownership = found.literal_default_paths && warnings.is_empty();
             return Ok(Some(FrameworkFeatures {
                 patterns,
                 source: found.source,
                 framework: descriptor.name,
                 warnings,
+                proves_ownership,
             }));
         }
     }
@@ -219,8 +224,10 @@ pub(crate) fn cucumber_discovery(
         for extension in reader.extensions {
             let path = input.root.join(format!("{CUCUMBER_STEM}.{extension}"));
             if candidate_exists(&path) {
-                let read =
-                    |text: &str, extension: &str| (reader.read_property)(text, extension, "paths");
+                let read = |text: &str, extension: &str| {
+                    let paths = (reader.read_property)(text, extension, "paths")?;
+                    Ok((paths, false))
+                };
                 return cucumber_config(input.root, &path, read).map(Some);
             }
         }
@@ -280,10 +287,13 @@ pub(crate) fn package_has_any_dependency(package: Option<&JsonValue>, names: &[&
 fn cucumber_config(
     root: &Path,
     path: &Path,
-    read_paths: impl FnOnce(&str, &str) -> Result<LiteralProperty>,
+    read_paths: impl FnOnce(&str, &str) -> Result<(LiteralProperty, bool)>,
 ) -> Result<DiscoveredFeatures> {
     let (text, extension) = read_config(root, path)?;
-    let paths = read_paths(&text, extension)?;
+    let (paths, default_array) = read_paths(&text, extension)?;
+    let literal_default_paths = default_array
+        && matches!(&paths, LiteralProperty::Strings(values) if !values.is_empty()
+            && values.iter().all(|value| ownership_path(root, value)));
     let mut warnings = Vec::new();
     let patterns = match paths {
         LiteralProperty::Missing => vec![CUCUMBER_DEFAULT.to_owned()],
@@ -296,7 +306,53 @@ fn cucumber_config(
             vec![CUCUMBER_DEFAULT.to_owned()]
         }
     };
-    Ok(DiscoveredFeatures::new(patterns, path.to_path_buf()).with_warnings(warnings))
+    Ok(DiscoveredFeatures {
+        patterns,
+        source: path.to_path_buf(),
+        warnings,
+        literal_default_paths,
+    })
+}
+
+/// Restricts exclusive ownership proof to project-relative literals and common recursive feature
+/// globs. Other path expressions still go through ordinary feature discovery.
+fn ownership_path(root: &Path, value: &str) -> bool {
+    let relative = root_relative(value);
+    let path = relative.trim_end_matches('/');
+    if value.trim() != value || Path::new(path).has_root() {
+        return false;
+    }
+    let (parents, name) = path.rsplit_once('/').unwrap_or(("", path));
+    let recursive = parents == "**" || parents.ends_with("/**");
+    let parents = if parents == "**" {
+        ""
+    } else {
+        parents.strip_suffix("/**").unwrap_or(parents)
+    };
+    if !parents.is_empty() && !parents.split('/').all(literal_path_component) {
+        return false;
+    }
+    if recursive {
+        return matches!(
+            name,
+            "*.feature" | "*.feature.md" | "*.{feature,feature.md}"
+        );
+    }
+    // Cucumber expands extensionless selections as directories. A dotted directory is not
+    // equivalent to a Cucumber path expanded by our general discovery.
+    literal_path_component(name)
+        && (!name.contains('.')
+            || ((name.ends_with(".feature") || name.ends_with(".feature.md"))
+                && !root.join(path).is_dir()))
+}
+
+/// A component with no glob, rerun-list, line-suffix, or platform-specific syntax.
+fn literal_path_component(part: &str) -> bool {
+    !part.is_empty()
+        && !part.starts_with('.')
+        && part
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'.' | b'-' | b'_'))
 }
 
 /// Drops initially blank inputs and negated paths, normalizes prefixes and numeric line suffixes, and
@@ -386,10 +442,14 @@ fn package_has_dependency(package: Option<&JsonValue>, dependency: &str) -> bool
 }
 
 /// Parses JSON and classifies paths from the default profile when present, otherwise from the root.
-fn cucumber_json_paths(text: &str) -> Result<LiteralProperty> {
+fn cucumber_json_paths(text: &str) -> Result<(LiteralProperty, bool)> {
     let root: JsonValue = serde_json::from_str(text)?;
-    let profile = root.get("default").unwrap_or(&root);
-    Ok(json_strings(profile.get("paths")))
+    let default = root.get("default");
+    let paths = default.unwrap_or(&root).get("paths");
+    Ok((
+        json_strings(paths),
+        default.is_some() && paths.is_some_and(JsonValue::is_array),
+    ))
 }
 
 /// Classifies an absent JSON value, a literal string or all-string array, or an unsupported dynamic value.
@@ -411,12 +471,13 @@ fn json_strings(value: Option<&JsonValue>) -> LiteralProperty {
 }
 
 /// Parses YAML and classifies paths from the default profile when present, otherwise from the root.
-fn cucumber_yaml_paths(text: &str) -> Result<LiteralProperty> {
+fn cucumber_yaml_paths(text: &str) -> Result<(LiteralProperty, bool)> {
     let root: YamlValue = yaml_serde::from_str(text)?;
     let default_key = YamlValue::String("default".to_owned());
     let paths_key = YamlValue::String("paths".to_owned());
-    let profile = root.get(&default_key).unwrap_or(&root);
-    Ok(match profile.get(&paths_key) {
+    let default = root.get(&default_key);
+    let paths = default.unwrap_or(&root).get(&paths_key);
+    let property = match paths {
         None => LiteralProperty::Missing,
         Some(YamlValue::String(value)) => LiteralProperty::Strings(vec![value.clone()]),
         Some(YamlValue::Sequence(values))
@@ -433,7 +494,11 @@ fn cucumber_yaml_paths(text: &str) -> Result<LiteralProperty> {
             )
         }
         Some(_) => LiteralProperty::Dynamic,
-    })
+    };
+    Ok((
+        property,
+        default.is_some() && matches!(paths, Some(YamlValue::Sequence(_))),
+    ))
 }
 
 #[cfg(test)]

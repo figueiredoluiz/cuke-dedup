@@ -1,6 +1,6 @@
 //! Gitignore-aware repository discovery.
 
-use crate::config::Config;
+use crate::config::{Config, MixedFeatureSelection};
 use crate::display_text::DiagnosticDetails;
 use crate::gherkin::FeatureFormat;
 use crate::resource_limits::{
@@ -10,14 +10,16 @@ use crate::resource_limits::{
 use crate::source_adapter;
 pub use crate::source_adapter::{SourceFile, SourceLanguage};
 use anyhow::{bail, Context, Result};
-use globset::{Glob, GlobMatcher, GlobSet, GlobSetBuilder};
+use globset::{Glob, GlobBuilder, GlobMatcher, GlobSet, GlobSetBuilder};
 use ignore::WalkBuilder;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 
 mod ignore_rules;
+mod mixed;
 use ignore_rules::IgnoreRules;
+pub(crate) use mixed::{FeatureOwner, MixedSuite};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 /// A discovered feature file together with its parser and matching config pattern.
@@ -29,6 +31,7 @@ pub struct FeatureFile {
     pub format: FeatureFormat,
     /// Effective glob pattern that selected this file.
     pub pattern: String,
+    pub(crate) owner: FeatureOwner,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -53,6 +56,7 @@ pub struct DiscoveredFiles {
     pub unmatched_feature_patterns: Vec<String>,
     /// Configured definition patterns that matched no files.
     pub unmatched_definition_patterns: Vec<String>,
+    pub(crate) mixed_suite: Option<MixedSuite>,
 }
 
 /// Discovers configured feature and definition files while respecting ignore rules, within a
@@ -161,14 +165,36 @@ pub(crate) fn discover_within(
     config: &Config,
     budget: &DiscoveryBudget,
 ) -> Result<DiscoveredFiles> {
-    let feature_globs = compile_pattern_matchers(&config.features, "feature")?;
+    discover_within_case_policy(config, budget, cfg!(any(windows, target_os = "macos")))
+}
+
+/// Discovers sources with an optional Cucumber.js case-alias check during mixed selection.
+fn discover_within_case_policy(
+    config: &Config,
+    budget: &DiscoveryBudget,
+    check_case_aliases: bool,
+) -> Result<DiscoveredFiles> {
+    let feature_globs = compile_pattern_matchers(&config.features, "feature", false)?;
     let definition_globs = if config.definitions.is_empty() {
         None
     } else {
-        Some(compile_pattern_matchers(&config.definitions, "definition")?)
+        Some(compile_pattern_matchers(
+            &config.definitions,
+            "definition",
+            false,
+        )?)
     };
     let excludes = ExcludeSet(compile_globs(&config.exclude, "exclude")?);
     let mut files = DiscoveredFiles::default();
+    let mut conventional = mixed::ConventionalCandidate::new(config);
+    let mut case_alias_globs = if check_case_aliases
+        && conventional.is_some()
+        && config.mixed_feature_selection == MixedFeatureSelection::Framework
+    {
+        compile_pattern_matchers(&config.features, "feature", true)?
+    } else {
+        Vec::new()
+    };
     let mut errors = DiagnosticDetails::default();
 
     let root = config.root.clone();
@@ -225,6 +251,12 @@ pub(crate) fn discover_within(
         };
         match entry.file_type() {
             Some(file_type) if file_type.is_file() => {}
+            Some(file_type) if file_type.is_dir() && entry.depth() == 1 => {
+                if let Some(candidate) = &mut conventional {
+                    candidate.observe_directory(entry.path());
+                }
+                continue;
+            }
             _ => continue,
         }
         let relative = entry
@@ -250,8 +282,26 @@ pub(crate) fn discover_within(
                 format,
                 path: entry.into_path(),
                 pattern: pattern.clone(),
+                owner: FeatureOwner::Framework,
             });
             continue;
+        }
+
+        if let Some(candidate) = &mut conventional {
+            let mut case_alias = false;
+            for (matcher, _) in &case_alias_globs {
+                if budget.matches(matcher, relative)? {
+                    case_alias = true;
+                    break;
+                }
+            }
+            if case_alias {
+                candidate.withhold_framework_ownership();
+                case_alias_globs.clear();
+            }
+            if candidate.observe_feature(entry.path()) {
+                continue;
+            }
         }
 
         if let Some(adapter) = config.adapters().adapter_for_path(relative) {
@@ -299,16 +349,21 @@ pub(crate) fn discover_within(
     // A refusal recorded at an entry the excludes then dropped surfaces here.
     rules.check()?;
 
-    files
-        .features
-        .sort_by(|left, right| left.path.cmp(&right.path));
     files.unmatched_feature_patterns = unmatched_patterns(
         budget,
         &feature_globs,
         &config.root,
         files.features.iter().map(|file| &file.path),
     )?;
-    select_conventional_suite(config, budget, &mut files)?;
+    if let Some(candidate) = conventional {
+        candidate.select(config, budget, &mut files)?;
+    }
+    if files.mixed_suite.is_none() {
+        select_conventional_suite(config, budget, &mut files)?;
+    }
+    files
+        .features
+        .sort_by(|left, right| left.path.cmp(&right.path));
     files
         .definitions
         .sort_by(|left, right| left.path.cmp(&right.path));
@@ -450,11 +505,18 @@ fn unmatched_patterns<'a>(
 }
 
 /// Compiles patterns into matchers paired with their original text for diagnostics.
-fn compile_pattern_matchers(patterns: &[String], kind: &str) -> Result<Vec<(GlobMatcher, String)>> {
+fn compile_pattern_matchers(
+    patterns: &[String],
+    kind: &str,
+    case_aliases: bool,
+) -> Result<Vec<(GlobMatcher, String)>> {
     patterns
         .iter()
         .map(|pattern| {
-            let glob = Glob::new(pattern)
+            let glob = GlobBuilder::new(pattern)
+                .case_insensitive(case_aliases)
+                .literal_separator(case_aliases)
+                .build()
                 .with_context(|| format!("invalid {kind} glob pattern `{pattern}`"))?;
             Ok((glob.compile_matcher(), pattern.clone()))
         })

@@ -5830,7 +5830,7 @@ fn quote_shaped_subscript_indexes_do_not_name_a_property() {
 }
 
 /// A fingerprint record serializes every field in schema order: identity, matcher normalization,
-/// then each handler key digested, and one line per definition in input order.
+/// then each handler key digested, and one line per definition in source order.
 #[test]
 fn fingerprint_records_serialize_every_field_in_schema_order() {
     use crate::model::{stable_fingerprint, stable_fingerprint_parts};

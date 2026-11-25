@@ -11,6 +11,7 @@ mod suppression;
 mod usage;
 
 pub use parameter_types::merge_parameter_types;
+pub(crate) use suppression::UnmatchedSuppressionOutcome;
 
 use crate::config::Config;
 use crate::model::{AnalysisResult, FeatureStep, StepDefinition};
@@ -39,6 +40,35 @@ pub(crate) struct AnalysisCensus {
     pub(crate) skipped_candidate_comparisons: u64,
     pub(crate) truncated_structural_classes: usize,
     pub(crate) candidate_sources: BTreeMap<String, CandidateSourceCensus>,
+}
+
+impl AnalysisCensus {
+    /// Accumulates the counts and completeness from independently evaluated scopes.
+    pub(crate) fn merge(&mut self, other: Self) {
+        self.truncated |= other.truncated;
+        self.candidate_comparisons_evaluated = self
+            .candidate_comparisons_evaluated
+            .saturating_add(other.candidate_comparisons_evaluated);
+        self.skipped_candidate_comparisons = self
+            .skipped_candidate_comparisons
+            .saturating_add(other.skipped_candidate_comparisons);
+        self.truncated_structural_classes = self
+            .truncated_structural_classes
+            .saturating_add(other.truncated_structural_classes);
+        for (source, count) in other.candidate_sources {
+            let total = self.candidate_sources.entry(source).or_default();
+            total.evaluated = total.evaluated.saturating_add(count.evaluated);
+            total.skipped = total.skipped.saturating_add(count.skipped);
+        }
+    }
+}
+
+/// Checks advisory suppressions once against the whole result.
+pub(crate) fn unmatched_suppressions(
+    config: &Config,
+    definitions: &[StepDefinition],
+) -> UnmatchedSuppressionOutcome {
+    suppression::SuppressionIndex::new(config, definitions).unmatched()
 }
 
 #[derive(Debug)]
@@ -131,7 +161,7 @@ pub(crate) fn analyze_for_cli(
         definitions,
         feature_steps,
         config,
-        true,
+        !config.mixed_analysis(),
         Some(indirect_usage),
         pair_records,
         unused_limits,
@@ -196,7 +226,7 @@ fn analyze_internal(
         pair_records,
     );
     let overlap_budget = config
-        .max_candidate_comparisons
+        .candidate_allowance()
         .saturating_sub(pair_analysis.census.candidate_comparisons_evaluated);
     let mut usage = usage::analyze_feature_usage(
         &definitions,

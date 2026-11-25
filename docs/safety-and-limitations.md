@@ -8,7 +8,7 @@ resource limits keep failures visible and bound the work performed.
 
 - The minimum supported Rust version is 1.100.
 - Node.js 24 LTS is recommended for the npm launcher. CI also tests Node.js 20 as the minimum compatible version; Node.js 20 has reached end of life upstream.
-- Source adapters cover JavaScript and TypeScript, including JSX and common module variants. Experimental [Cucumber-Ruby](discovery/cucumber-ruby.md) discovers standalone conventional suites by default and supports explicit selection for other layouts. Its supported subset and completion gaps remain separate from JS/TS support.
+- Source adapters cover JavaScript and TypeScript, including JSX and common module variants. Experimental [Cucumber-Ruby](discovery/cucumber-ruby.md) discovers conventional suites by default, compares coexisting Ruby and Cucumber.js suites separately when ownership is clear, and supports explicit selection for other layouts. Its supported subset and completion gaps remain separate from JS/TS support.
 - Unsupported source languages are rejected rather than guessed.
 - Classic Gherkin and Gherkin Markdown are supported, including declared Gherkin dialects.
 - Before version 1.0, configuration and machine-report schemas may evolve between minor releases.
@@ -22,7 +22,7 @@ resource limits keep failures visible and bound the work performed.
 - JS/TS parse failures retain error-recovered definitions and warn as incomplete by default. `--fail-on-unparseable` makes those failures fatal; `--fail-on-incomplete` rejects all incompleteness. Unsupported regex constructs warn; malformed matcher escapes are operational errors.
 - Extension routing never retries a file with another grammar. The pinned JavaScript 0.25 and TypeScript/TSX 0.23 grammars reject some valid syntax: typed tagged templates (`` styled.button<{…}>`…` ``), `export type * as … from`, function-type parameters named after predefined types (`(string) => void`), call type arguments containing `typeof import(…)`, `import(…).Type[]`, chained assertions such as `as unknown as (typeof module)["key"]`, bare `&` or decimal character references longer than five digits in JSX, and JSX attributes named `in` in `.js`. Flow, pipeline proposals and removed `assert { … }` import assertions are unsupported by design. Unparseable modules never supply trusted registration exports. Recovery may retain other registrations, but the run remains incomplete.
 - Lowercase `given`/`when`/`then` are recognised through resolved imports, such as `const { given } = createBdd(test)` with an imported Playwright-BDD factory, or through proven Jest-Cucumber scenario callbacks, such as `test('scenario', ({ given }) => { … })` inside `defineFeature`. They are never assumed to be ambient globals. A bare lowercase call with neither origin registers nothing. Name it in the `registrations` configuration (see `configuration.md`) to explicitly enable it as a global registration.
-- One analysis root is one corpus. Analyze independent monorepo packages separately.
+- Analyze independent monorepo packages separately. See the supported mixed-suite exception in [Corpus boundaries](discovery/corpus-boundaries.md).
 - Regular expressions are matched against feature steps but are never reversed into invented
   overlap witnesses.
 - Bounded fuzzy indexes preserve a deterministic sample in highly repetitive vocabularies but do

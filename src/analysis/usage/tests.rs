@@ -1424,7 +1424,8 @@ fn assert_original_identity(finding: &Finding, message: String, difference: Stri
     assert_eq!(finding_fingerprint(finding), expected);
     let restored: Finding = serde_json::from_value(serde_json::to_value(finding).unwrap()).unwrap();
     let mut current = [restored.clone(), restored];
-    let outcome = apply_reference_baseline(&mut current, &[legacy.clone()], "accepted").unwrap();
+    let outcome =
+        apply_reference_baseline(&mut current, &[legacy.clone()], "accepted", None).unwrap();
     assert_eq!((outcome.suppressed, outcome.new_findings), (1, 1));
     assert!(!current[0].is_active());
     assert!(current[1].is_active());
@@ -1435,9 +1436,13 @@ fn assert_original_identity(finding: &Finding, message: String, difference: Stri
     if finding.original_fingerprint.is_some() {
         let mut literal = finding.clone();
         literal.original_fingerprint = None;
-        let outcome =
-            apply_reference_baseline(std::slice::from_mut(&mut literal), &[legacy], "accepted")
-                .unwrap();
+        let outcome = apply_reference_baseline(
+            std::slice::from_mut(&mut literal),
+            &[legacy],
+            "accepted",
+            None,
+        )
+        .unwrap();
         assert_eq!(outcome.new_findings, 1);
         assert!(literal.is_active());
     }
@@ -1611,7 +1616,8 @@ fn sampled_ambiguity_members_keep_original_identity() {
     }
     let mut changed = [variants[1].clone()];
     let outcome =
-        crate::modes::apply_reference_baseline(&mut changed, &variants[..1], "accepted").unwrap();
+        crate::modes::apply_reference_baseline(&mut changed, &variants[..1], "accepted", None)
+            .unwrap();
     assert_eq!(outcome.new_findings, 1);
     assert!(changed[0].is_active());
 }
@@ -2137,7 +2143,7 @@ fn matching_cutoff_marks_cached_outline_count_as_lower_bound() {
     );
     let mut baseline_checked = actual.clone();
     let baseline =
-        crate::modes::apply_reference_baseline(&mut baseline_checked, &expected, "accepted")
+        crate::modes::apply_reference_baseline(&mut baseline_checked, &expected, "accepted", None)
             .unwrap();
     assert_eq!(baseline.new_findings, 1);
     assert!(baseline_checked[0].is_active());

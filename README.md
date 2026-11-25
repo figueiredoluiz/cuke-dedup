@@ -15,7 +15,7 @@ It supports:
 - Terminal, JSON, JSON Lines, HTML, and SARIF reports.
 - Thresholds, baselines, changed-file analysis, suppressions, and ignore files.
 
-Ruby support is experimental. A conventional standalone Cucumber-Ruby project with its steps, support files and `.feature` files under `features/` can run `cuke-dedup` from the project root. For a different layout or a repository that also contains JS/TS sources, select the Ruby suite explicitly and include its support files. See the [supported subset and known limitations](docs/discovery-and-frameworks.md#cucumber-ruby).
+Ruby support is experimental. Run `cuke-dedup` from the project root to analyze a conventional Cucumber-Ruby suite under `features/`. In mixed repositories, automatic discovery can analyze it alongside a JS/TS suite with separate feature paths declared in a Cucumber.js configuration file. For custom Ruby layouts, select the suite explicitly and include its support files. See the [supported subset and known limitations](docs/discovery-and-frameworks.md#cucumber-ruby).
 
 ## Install
 

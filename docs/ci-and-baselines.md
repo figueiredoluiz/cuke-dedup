@@ -111,6 +111,8 @@ Baselines store sorted semantic fingerprints with multiplicity counts. Renames a
 changes do not make a finding new, while an additional occurrence beyond the recorded count does.
 Version `1` and `2` baselines can be replaced by running the version `3` tool with `--update-baseline`; comparison rejects mismatched schemas and names the regeneration command.
 
+When automatic discovery selects both Cucumber-Ruby and Cucumber.js suites, each baseline allowance applies within its comparison domain. Regenerate a saved baseline when switching between single-suite and mixed-suite analysis. Git reference baselines compare each suite within its domain whenever either revision uses mixed discovery.
+
 Updates reject `--changed-since` and are skipped after incomplete analysis or an operational error,
 preventing a partial scan from erasing accepted findings. An update whose serialized output exceeds the 8 MiB baseline read limit fails before replacing the previous file.
 

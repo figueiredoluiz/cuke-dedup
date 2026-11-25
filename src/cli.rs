@@ -1,6 +1,7 @@
 //! Command-line parsing and analysis orchestration.
 
 use crate::analysis;
+use crate::analysis::pair_records::PairRecords;
 use crate::config::{CliConfigOverrides, Config, ConfigOverrides, ReporterKind};
 use crate::discovery;
 use crate::display_text::{diagnostic_safe, DiagnosticDetails};
@@ -86,7 +87,8 @@ struct CheckOptions {
     #[arg(long, global = true)]
     require_definitions: bool,
 
-    /// Maximum unique definition pairs retained, up to the hard safety ceiling.
+    /// Maximum candidate comparisons across the run, up to the hard safety ceiling.
+    /// In mixed runs, the configured suite uses the remaining budget after the conventional suite.
     #[arg(long, global = true, value_name = "COUNT", value_parser = parse_positive_usize)]
     max_candidate_comparisons: Option<usize>,
 
@@ -205,10 +207,12 @@ struct ExtractedCorpus {
     definitions: Vec<crate::model::StepDefinition>,
     feature_steps: Vec<crate::model::FeatureStep>,
     excluded_sources: Vec<(PathBuf, source_adapter::SourceExclusion)>,
+    definition_domain: Option<&'static source_adapter::DomainSpec>,
     selected_feature_files: usize,
     definition_files_with_definitions: usize,
     parsed_feature_files: usize,
     feature_files_without_steps: usize,
+    feature_ownership_incomplete: bool,
     incomplete: bool,
 }
 
@@ -220,7 +224,7 @@ struct AnalyzedCorpus {
     feature_files_without_steps: usize,
     corpus_incomplete: bool,
     run_incomplete: bool,
-    pair_records: analysis::pair_records::PairRecords,
+    mixed: bool,
 }
 
 struct PhaseTimings {
@@ -286,7 +290,7 @@ fn execute(cli: Cli) -> Result<i32> {
     let parsing_started = Instant::now();
     let mut diagnostics = discovery_diagnostics(config, &files, &changed_files);
     let mut feature_budget = gherkin::FeatureStepBudget::default();
-    let extracted = extract_corpus(
+    let extracted = extract_selected_corpora(
         config,
         &files,
         &changed_files,
@@ -295,12 +299,12 @@ fn execute(cli: Cli) -> Result<i32> {
     );
     let parsing_ms = elapsed_ms(parsing_started);
     let analysis_started = Instant::now();
-    let collect_pairs = options.emit_pairs.is_some();
-    let mut analyzed = analyze_corpus(
+    let mut pair_records = PairRecords::default();
+    let mut analyzed = analyze_selected_corpora(
         config,
         extracted,
         &mut diagnostics,
-        collect_pairs,
+        options.emit_pairs.is_some().then_some(&mut pair_records),
         analysis::UNUSED_FINDING_LIMITS,
     )?;
     let analysis_ms = elapsed_ms(analysis_started);
@@ -329,7 +333,7 @@ fn execute(cli: Cli) -> Result<i32> {
             EmitSink::open(config, options, path, "pair file", fingerprints.as_ref())?.fill(|out| {
                 analysis::pair_records::write_pairs(
                     &analyzed.result.definitions,
-                    &analyzed.pair_records,
+                    &pair_records,
                     &config.root,
                     out,
                 )
@@ -339,8 +343,7 @@ fn execute(cli: Cli) -> Result<i32> {
     let baseline_outcome = apply_baseline_mode(
         config,
         options,
-        &mut analyzed.result,
-        analyzed.run_incomplete,
+        &mut analyzed,
         &mut diagnostics,
         &mut feature_budget,
         &discovery_budget,
@@ -512,6 +515,186 @@ fn skipped_definitions_warning(
     )
 }
 
+/// Splits proven scopes before extraction so session state cannot cross suite boundaries.
+fn extract_selected_corpora(
+    config: &Config,
+    files: &discovery::DiscoveredFiles,
+    changed_files: &Option<BTreeSet<PathBuf>>,
+    diagnostics: &mut Diagnostics,
+    feature_budget: &mut gherkin::FeatureStepBudget,
+) -> Vec<ExtractedCorpus> {
+    use discovery::FeatureOwner;
+    let Some(suite) = &files.mixed_suite else {
+        return vec![extract_corpus(
+            config,
+            files,
+            changed_files,
+            diagnostics,
+            feature_budget,
+        )];
+    };
+
+    let unresolved = files
+        .features
+        .iter()
+        .any(|file| file.owner == FeatureOwner::Unresolved);
+    if unresolved {
+        let message = "mixed suites have unresolved feature ownership; those features were omitted and unused-definition and static overlap findings are disabled".to_owned();
+        if config.require_features {
+            diagnostics.errors.push(message);
+        } else {
+            diagnostics.warnings.push(message);
+        }
+    }
+    let mut extraction_config = config.clone();
+    extraction_config.require_definitions = false;
+    let mut corpora = Vec::with_capacity(2);
+    for owner in [FeatureOwner::Conventional, FeatureOwner::Framework] {
+        let conventional = owner == FeatureOwner::Conventional;
+        let definitions: Vec<_> = files
+            .definitions
+            .iter()
+            .filter(|file| (file.language == suite.conventional_language) == conventional)
+            .cloned()
+            .collect();
+        // The discovered language survives canonicalization of a dependency through an alias.
+        let in_scope = |path: &Path| {
+            definitions
+                .binary_search_by(|file| file.path.as_path().cmp(path))
+                .is_ok()
+        };
+        let dependencies = files
+            .dependencies
+            .iter()
+            .filter(|edge| in_scope(&edge.location.path))
+            .cloned()
+            .collect();
+        let dependency_gaps = files
+            .dependency_gaps
+            .iter()
+            .filter(|gap| in_scope(&gap.location.path))
+            .cloned()
+            .collect();
+        let scoped = discovery::DiscoveredFiles {
+            definitions,
+            features: files
+                .features
+                .iter()
+                .filter(|file| file.owner == owner)
+                .cloned()
+                .collect(),
+            dependencies,
+            dependency_gaps,
+            ..discovery::DiscoveredFiles::default()
+        };
+        let mut extracted = extract_corpus(
+            &extraction_config,
+            &scoped,
+            changed_files,
+            diagnostics,
+            feature_budget,
+        );
+        // Mixed selection already proved a conventional feature exists. A configured suite can
+        // still have no matches for its own pattern; unresolved ownership is diagnosed above.
+        let missing_features = !conventional && !unresolved && scoped.features.is_empty();
+        if missing_features {
+            let message = "configured suite has no discovered feature files; unused-definition findings are disabled for this incomplete corpus".to_owned();
+            if config.require_features {
+                diagnostics.errors.push(message);
+            } else {
+                diagnostics.warnings.push(message);
+            }
+        }
+        extracted.feature_ownership_incomplete = unresolved;
+        extracted.incomplete |= unresolved || missing_features;
+        corpora.push(extracted);
+    }
+    if config.require_definitions && corpora.iter().all(|corpus| corpus.definitions.is_empty()) {
+        diagnostics
+            .errors
+            .push("definition extraction produced 0 definitions".to_owned());
+    }
+    corpora
+}
+
+/// Analyzes isolated suites within the run's limits and assembles the usual report inputs.
+fn analyze_selected_corpora(
+    config: &Config,
+    extracted: Vec<ExtractedCorpus>,
+    diagnostics: &mut Diagnostics,
+    mut records: Option<&mut PairRecords>,
+    unused_limits: (usize, usize),
+) -> Result<AnalyzedCorpus> {
+    let mut scoped_config = config.clone();
+    scoped_config.mixed_candidate_allowance =
+        (extracted.len() > 1).then_some(config.max_candidate_comparisons);
+    let mut corpora = extracted.into_iter();
+    let first = corpora
+        .next()
+        .context("analysis requires a selected corpus")?;
+    let mut result = analyze_corpus(
+        &scoped_config,
+        first,
+        diagnostics,
+        records.as_deref_mut(),
+        unused_limits,
+    )?;
+    for corpus in corpora {
+        scoped_config.mixed_candidate_allowance = Some(
+            config
+                .max_candidate_comparisons
+                .saturating_sub(result.census.candidate_comparisons_evaluated),
+        );
+        if let Some(records) = records.as_deref_mut() {
+            records.set_definition_offset(result.result.definitions.len());
+        }
+        let mut next = analyze_corpus(
+            &scoped_config,
+            corpus,
+            diagnostics,
+            records.as_deref_mut(),
+            unused_limits,
+        )?;
+        result
+            .result
+            .definitions
+            .append(&mut next.result.definitions);
+        result
+            .result
+            .feature_steps
+            .append(&mut next.result.feature_steps);
+        result.result.findings.append(&mut next.result.findings);
+        result.census.merge(next.census);
+        result.definition_files_with_definitions += next.definition_files_with_definitions;
+        result.parsed_feature_files += next.parsed_feature_files;
+        result.feature_files_without_steps += next.feature_files_without_steps;
+        result.corpus_incomplete |= next.corpus_incomplete;
+        result.run_incomplete |= next.run_incomplete;
+    }
+    if scoped_config.mixed_analysis() {
+        result.result.findings.sort_by(|left, right| {
+            (
+                &left.primary.path,
+                left.primary.line,
+                left.primary.column,
+                left.rule,
+            )
+                .cmp(&(
+                    &right.primary.path,
+                    right.primary.line,
+                    right.primary.column,
+                    right.rule,
+                ))
+        });
+        report_unmatched_suppressions(
+            config,
+            analysis::unmatched_suppressions(config, &result.result.definitions),
+            diagnostics,
+        );
+    }
+    Ok(result)
+}
+
 /// Extracts definitions, then feature steps, into a corpus.
 fn extract_corpus(
     config: &Config,
@@ -526,10 +709,15 @@ fn extract_corpus(
         definitions: Vec::new(),
         feature_steps: Vec::new(),
         excluded_sources: Vec::new(),
+        definition_domain: files
+            .definitions
+            .first()
+            .and_then(|file| config.adapters().comparison_domain(file.language)),
         selected_feature_files: files.features.len(),
         definition_files_with_definitions: 0,
         parsed_feature_files: 0,
         feature_files_without_steps: 0,
+        feature_ownership_incomplete: false,
         incomplete: false,
     };
     extract_definitions(config, files, changed_files, diagnostics, &mut corpus);
@@ -873,7 +1061,7 @@ fn analyze_corpus(
     config: &Config,
     extracted: ExtractedCorpus,
     diagnostics: &mut Diagnostics,
-    collect_pairs: bool,
+    records: Option<&mut PairRecords>,
     unused_limits: (usize, usize),
 ) -> Result<AnalyzedCorpus> {
     let ExtractedCorpus {
@@ -883,24 +1071,31 @@ fn analyze_corpus(
         feature_steps,
         // Reported during extraction; analysis works only from what survived exclusion.
         excluded_sources: _,
+        definition_domain: _,
         selected_feature_files,
         definition_files_with_definitions,
         parsed_feature_files,
         feature_files_without_steps,
+        feature_ownership_incomplete,
         incomplete: mut corpus_incomplete,
     } = extracted;
     let mut effective_config = config.clone();
     let (patterns, type_diagnostics) =
         analysis::merge_parameter_types(parameter_types, &config.parameter_types);
     effective_config.parameter_types = patterns;
+    if feature_ownership_incomplete {
+        // Omitted steps can exercise an overlap, but cannot invalidate a proven ambiguity.
+        effective_config
+            .rules
+            .insert(Rule::OverlappingMatcher, Severity::Off);
+    }
     corpus_incomplete |= !type_diagnostics.is_empty();
     diagnostics.warnings.extend(type_diagnostics);
     let config = &effective_config;
-    let mut pair_records = analysis::pair_records::PairRecords::default();
-    let sink = collect_pairs.then_some(&mut pair_records);
     // A missing or unreadable feature corpus cannot establish that a definition is unused.
     // A Markdown conversion can parse successfully while losing every step.
-    let evaluate_unused = selected_feature_files > 0
+    let evaluate_unused = !feature_ownership_incomplete
+        && selected_feature_files > 0
         && parsed_feature_files == selected_feature_files
         && feature_files_without_steps == 0;
     let analyzed = analysis::analyze_for_cli(
@@ -908,24 +1103,16 @@ fn analyze_corpus(
         definitions,
         feature_steps,
         config,
-        sink,
-        evaluate_unused.then_some(unused_limits),
+        records,
+        evaluate_unused.then(|| {
+            (
+                config.analysis_allowance(unused_limits.0),
+                config.analysis_allowance(unused_limits.1),
+            )
+        }),
     );
     let (analysis, census, unmatched_suppressions) = analyzed?;
-    for index in unmatched_suppressions.indices {
-        let suppression = &config.suppressions[index];
-        diagnostics.warnings.push(format!(
-            "suppression {} for {} matched no step definitions",
-            index + 1,
-            suppression.rule
-        ));
-    }
-    if unmatched_suppressions.truncated {
-        diagnostics.warnings.push(
-            "unmatched suppression validation stopped after its safety limit; analysis findings are unaffected"
-                .to_owned(),
-        );
-    }
+    report_unmatched_suppressions(config, unmatched_suppressions, diagnostics);
 
     // Bounded work that could not finish makes findings a subset of a complete run, but every
     // reported finding remains valid. `--fail-on-incomplete` restores strict CI gating.
@@ -948,8 +1135,30 @@ fn analyze_corpus(
         feature_files_without_steps,
         corpus_incomplete,
         run_incomplete,
-        pair_records,
+        mixed: config.mixed_analysis(),
     })
+}
+
+/// Reports suppressions that select no definition in the complete set of analyzed scopes.
+fn report_unmatched_suppressions(
+    config: &Config,
+    unmatched_suppressions: analysis::UnmatchedSuppressionOutcome,
+    diagnostics: &mut Diagnostics,
+) {
+    for index in unmatched_suppressions.indices {
+        let suppression = &config.suppressions[index];
+        diagnostics.warnings.push(format!(
+            "suppression {} for {} matched no step definitions",
+            index + 1,
+            suppression.rule
+        ));
+    }
+    if unmatched_suppressions.truncated {
+        diagnostics.warnings.push(
+            "unmatched suppression validation stopped after its safety limit; analysis findings are unaffected"
+                .to_owned(),
+        );
+    }
 }
 
 /// Checks whether automatic selection omitted a historical suite represented in the current run.
@@ -989,16 +1198,53 @@ fn reference_skips_current_suite(
         })
 }
 
+/// Rejects a mixed reference when one source scope lacks the evidence required for subtraction.
+fn validate_mixed_reference_scopes(
+    revision: &str,
+    conventional_domain: Option<&source_adapter::DomainSpec>,
+    corpora: &[ExtractedCorpus],
+    current_definitions: &[crate::model::StepDefinition],
+) -> Result<()> {
+    for corpus in corpora {
+        let Some(domain) = corpus.definition_domain else {
+            continue;
+        };
+        let suite = if conventional_domain == Some(domain) {
+            "conventional"
+        } else {
+            "configured"
+        };
+        if corpus.selected_feature_files == 0
+            && !corpus.definitions.is_empty()
+            && !corpus.feature_ownership_incomplete
+        {
+            bail!(
+                "baseline revision `{revision}` is incomplete: the {suite} suite has no discovered feature files"
+            );
+        }
+        if corpus.definitions.is_empty()
+            && current_definitions
+                .iter()
+                .any(|definition| definition.analysis_profile().domain == domain)
+        {
+            bail!(
+                "baseline revision `{revision}` is incomplete: the {suite} suite kept no step definitions while the current suite has some"
+            );
+        }
+    }
+    Ok(())
+}
+
 /// Subtracts the findings of a baseline (a Git revision or a baseline file) from the current run.
 fn apply_baseline_mode(
     config: &Config,
     options: &CheckOptions,
-    result: &mut crate::model::AnalysisResult,
-    run_incomplete: bool,
+    analyzed: &mut AnalyzedCorpus,
     diagnostics: &mut Diagnostics,
     feature_budget: &mut gherkin::FeatureStepBudget,
     discovery_budget: &discovery::DiscoveryBudget,
 ) -> Result<Option<modes::BaselineOutcome>> {
+    let result = &mut analyzed.result;
     if let Some(revision) = &options.baseline_from_ref {
         let (_snapshot, root) = modes::baseline_snapshot(&config.root, revision)?;
         // Freeze the current policy instead of loading historical rule/config overrides. The
@@ -1015,18 +1261,28 @@ fn apply_baseline_mode(
             );
         }
         let mut base_diagnostics = discovery_diagnostics(&base_config, &files, &None);
-        let extracted = extract_corpus(
+        let extracted = extract_selected_corpora(
             &base_config,
             &files,
             &None,
             &mut base_diagnostics,
             feature_budget,
         );
-        let base = analyze_corpus(
+        if let Some(suite) = &files.mixed_suite {
+            validate_mixed_reference_scopes(
+                revision,
+                base_config
+                    .adapters()
+                    .comparison_domain(suite.conventional_language),
+                &extracted,
+                &result.definitions,
+            )?;
+        }
+        let base = analyze_selected_corpora(
             &base_config,
             extracted,
             &mut base_diagnostics,
-            false,
+            None,
             analysis::UNUSED_FINDING_LIMITS,
         )?;
         // A baseline that produced a hard error, or that has definitions but no features to anchor
@@ -1069,10 +1325,17 @@ fn apply_baseline_mode(
                 "baseline revision `{revision}` is incomplete, so a finding it did not extract may appear as new; pass --fail-on-incomplete to reject an incomplete baseline"
             ));
         }
+        let domains = (analyzed.mixed || base.mixed).then(|| {
+            (
+                modes::BaselineDomains::new(&result.definitions),
+                modes::BaselineDomains::new(&base.result.definitions),
+            )
+        });
         return modes::apply_reference_baseline(
             &mut result.findings,
             &base.result.findings,
             revision,
+            domains.as_ref().map(|(live, reference)| (live, reference)),
         )
         .map(Some);
     }
@@ -1084,17 +1347,20 @@ fn apply_baseline_mode(
     } else {
         config.root.join(path)
     };
-    if options.update_baseline && (run_incomplete || !diagnostics.errors.is_empty()) {
+    if options.update_baseline && (analyzed.run_incomplete || !diagnostics.errors.is_empty()) {
         diagnostics.warnings.push(format!(
             "baseline {} was not updated because analysis is incomplete",
             path.display()
         ));
         return Ok(None);
     }
+    let domains = analyzed
+        .mixed
+        .then(|| modes::BaselineDomains::new(&result.definitions));
     let outcome = if options.update_baseline {
-        modes::update_baseline(&mut result.findings, &path)?
+        modes::update_baseline_with_domains(&mut result.findings, &path, domains.as_ref())?
     } else {
-        modes::apply_baseline(&mut result.findings, &path)?
+        modes::apply_baseline_with_domains(&mut result.findings, &path, domains.as_ref())?
     };
     if options.update_baseline {
         diagnostics.warnings.push(format!(
@@ -1302,8 +1568,14 @@ fn discovery_explanations(
     ));
     let features = files.features.iter().map(|file| {
         let relative = file.path.strip_prefix(&config.root).unwrap_or(&file.path);
+        let ownership = match (&files.mixed_suite, file.owner) {
+            (_, discovery::FeatureOwner::Unresolved) => " (unresolved suite ownership)",
+            (Some(_), discovery::FeatureOwner::Conventional) => " (conventional suite)",
+            (Some(_), discovery::FeatureOwner::Framework) => " (configured suite)",
+            (None, _) => "",
+        };
         format!(
-            "feature {} [{}] via {}",
+            "feature {} [{}] via {}{ownership}",
             relative.display(),
             file.format.as_str(),
             file.pattern

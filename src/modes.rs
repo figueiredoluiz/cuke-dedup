@@ -1,7 +1,7 @@
 //! Changed-files and existing-findings baseline modes for incremental CI adoption.
 
 use crate::config::canonical_platform_path;
-use crate::model::{stable_fingerprint_parts, Finding, Suppression};
+use crate::model::{stable_fingerprint_parts, Finding, Rule, StepDefinition, Suppression};
 use crate::resource_limits::{
     read_utf8, LimitedWriter, MAX_BASELINE_INPUT_BYTES, MAX_CHANGED_PATH_BYTES,
     MAX_CHANGED_PATH_RECORDS,
@@ -728,13 +728,68 @@ pub struct BaselineOutcome {
     pub removed: usize,
 }
 
+/// Resolves baseline identity from a finding's definition file when comparison spans suites.
+pub(crate) struct BaselineDomains<'a>(BTreeMap<&'a Path, &'static str>);
+
+impl<'a> BaselineDomains<'a> {
+    /// Indexes extracted definition files by their analysis domain.
+    pub(crate) fn new(definitions: &'a [StepDefinition]) -> Self {
+        Self(
+            definitions
+                .iter()
+                .map(|definition| {
+                    (
+                        definition.location.path.as_path(),
+                        definition.analysis_profile().domain.label,
+                    )
+                })
+                .collect(),
+        )
+    }
+}
+
+/// Wraps the ordinary fingerprint in a domain key when suite isolation is required.
+fn baseline_key(finding: &Finding, domains: Option<&BaselineDomains<'_>>) -> Result<String> {
+    let fingerprint = finding_fingerprint(finding);
+    let Some(domains) = domains else {
+        return Ok(fingerprint);
+    };
+    // An ambiguous feature step is anchored to its first matched definition.
+    let source = if finding.rule == Rule::AmbiguousStep {
+        finding
+            .related
+            .first()
+            .context("ambiguous finding has no matched definition")?
+    } else {
+        &finding.primary
+    };
+    let domain = domains
+        .0
+        .get(source.path.as_path())
+        .context("finding has no baseline comparison domain")?;
+    Ok(stable_fingerprint_parts([
+        "finding-domain",
+        domain,
+        &fingerprint,
+    ]))
+}
+
 /// Suppresses findings found in a schema-compatible semantic baseline.
 ///
 /// Multiplicity is consumed in finding order, so adding another instance of accepted
 /// duplication remains visible even when its content fingerprint is already present.
 pub fn apply_baseline(findings: &mut [Finding], baseline_path: &Path) -> Result<BaselineOutcome> {
+    apply_baseline_with_domains(findings, baseline_path, None)
+}
+
+/// Applies a saved file using either domain-specific keys or the ordinary public keys.
+pub(crate) fn apply_baseline_with_domains(
+    findings: &mut [Finding],
+    baseline_path: &Path,
+    domains: Option<&BaselineDomains<'_>>,
+) -> Result<BaselineOutcome> {
     let baseline = load_baseline(baseline_path)?;
-    apply_loaded_baseline(findings, baseline_path, &baseline)
+    apply_loaded_baseline(findings, baseline_path, &baseline, domains)
 }
 
 /// Suppresses `findings` against a baseline built from the active findings in `accepted`.
@@ -745,13 +800,30 @@ pub(crate) fn apply_reference_baseline(
     findings: &mut [Finding],
     accepted: &[Finding],
     revision: &str,
+    domains: Option<(&BaselineDomains<'_>, &BaselineDomains<'_>)>,
 ) -> Result<BaselineOutcome> {
-    apply_loaded_baseline(findings, Path::new(revision), &build_baseline(accepted))
+    let (live, reference) = domains.unzip();
+    let baseline = build_baseline(accepted, reference)?;
+    apply_loaded_baseline(findings, Path::new(revision), &baseline, live)
 }
 
 /// Rewrites a baseline from the current active findings and suppresses those findings.
 pub fn update_baseline(findings: &mut [Finding], baseline_path: &Path) -> Result<BaselineOutcome> {
-    update_baseline_with_limit(findings, baseline_path, MAX_BASELINE_INPUT_BYTES as usize)
+    update_baseline_with_domains(findings, baseline_path, None)
+}
+
+/// Rewrites the saved baseline with the identity used by this run.
+pub(crate) fn update_baseline_with_domains(
+    findings: &mut [Finding],
+    baseline_path: &Path,
+    domains: Option<&BaselineDomains<'_>>,
+) -> Result<BaselineOutcome> {
+    update_baseline_with_limit(
+        findings,
+        baseline_path,
+        MAX_BASELINE_INPUT_BYTES as usize,
+        domains,
+    )
 }
 
 /// Stages a baseline within the read ceiling before replacing it or suppressing any findings.
@@ -759,6 +831,7 @@ fn update_baseline_with_limit(
     findings: &mut [Finding],
     baseline_path: &Path,
     max_bytes: usize,
+    domains: Option<&BaselineDomains<'_>>,
 ) -> Result<BaselineOutcome> {
     let destination = crate::output_file::OutputFile::open(baseline_path, true)?;
     let previous = if let Some(file) = destination.previous() {
@@ -766,7 +839,7 @@ fn update_baseline_with_limit(
     } else {
         BaselineFile::empty()
     };
-    let current = build_baseline(findings);
+    let current = build_baseline(findings, domains)?;
     let added = count_added(&previous.fingerprints, &current.fingerprints);
     let removed = count_added(&current.fingerprints, &previous.fingerprints);
     let stage = destination.stage(|out| {
@@ -781,7 +854,7 @@ fn update_baseline_with_limit(
     stage
         .and_then(crate::output_file::Staged::commit)
         .with_context(|| format!("failed to write baseline {}", baseline_path.display()))?;
-    let mut outcome = apply_loaded_baseline(findings, baseline_path, &current)?;
+    let mut outcome = apply_loaded_baseline(findings, baseline_path, &current, domains)?;
     outcome.added = added;
     outcome.removed = removed;
     Ok(outcome)
@@ -835,26 +908,30 @@ fn decode_baseline(text: &str, baseline_path: &Path) -> Result<BaselineFile> {
         .with_context(|| format!("failed to parse baseline {}", baseline_path.display()))
 }
 
-/// Counts active findings per `finding_fingerprint`; suppressed and `Off` findings are left out.
-fn build_baseline(findings: &[Finding]) -> BaselineFile {
+/// Counts active findings per baseline key; suppressed and `Off` findings are left out.
+fn build_baseline(
+    findings: &[Finding],
+    domains: Option<&BaselineDomains<'_>>,
+) -> Result<BaselineFile> {
     let mut baseline = BaselineFile::empty();
     for finding in findings.iter().filter(|finding| finding.is_active()) {
         *baseline
             .fingerprints
-            .entry(finding_fingerprint(finding))
+            .entry(baseline_key(finding, domains)?)
             .or_default() += 1;
     }
-    baseline
+    Ok(baseline)
 }
 
 /// Suppresses each active finding whose fingerprint has multiplicity left in `baseline`,
 /// consuming one per match in finding order; unmatched active findings count as new.
 ///
-/// Inactive findings are skipped. Never returns `Err`.
+/// Skips inactive findings and rejects missing domain evidence when isolation is required.
 fn apply_loaded_baseline(
     findings: &mut [Finding],
     baseline_path: &Path,
     baseline: &BaselineFile,
+    domains: Option<&BaselineDomains<'_>>,
 ) -> Result<BaselineOutcome> {
     let mut allowance = baseline.fingerprints.clone();
     let mut outcome = BaselineOutcome::default();
@@ -862,7 +939,7 @@ fn apply_loaded_baseline(
         if !finding.is_active() {
             continue;
         }
-        let fingerprint = finding_fingerprint(finding);
+        let fingerprint = baseline_key(finding, domains)?;
         match allowance.get_mut(&fingerprint) {
             Some(remaining) if *remaining > 0 => {
                 *remaining -= 1;

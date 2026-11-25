@@ -15,7 +15,7 @@ How feature paths are read from Playwright-BDD, Cypress and Cucumber.js setup wh
 
 ## Corpus boundaries
 
-One analysis root is one comparison corpus. How to scope monorepos and feature-local registries, and why filtering features alone does not restrict definitions. Details: [discovery/corpus-boundaries.md](discovery/corpus-boundaries.md).
+An analysis root usually defines one comparison corpus. [Automatically discovered mixed Ruby and Cucumber.js suites](#cucumber-ruby) use separate comparison corpora and combine their findings in one report. For monorepos and feature-local registries, scope both features and definitions to the suite. Details: [discovery/corpus-boundaries.md](discovery/corpus-boundaries.md).
 
 ## Generated and non-source content
 
@@ -31,6 +31,6 @@ What marks a corpus incomplete, how reports expose it, and the flags that turn i
 
 ## Cucumber-Ruby
 
-Experimental Ruby support covers default discovery for standalone conventional suites, explicit selection, registrations, and static dependency analysis. [Cucumber-Ruby support](discovery/cucumber-ruby.md)
+Experimental Ruby support covers automatic discovery for conventional suites, including mixed repositories with separate feature selections, explicit selection, registrations, and static dependency analysis. [Cucumber-Ruby support](discovery/cucumber-ruby.md)
 
 Sections: [Registrations and providers](discovery/cucumber-ruby.md#registrations-and-providers), [Handlers and assertion evidence](discovery/cucumber-ruby.md#handlers-and-assertion-evidence), [Matchers](discovery/cucumber-ruby.md#matchers), [Ownership, dependencies and usage](discovery/cucumber-ruby.md#ownership-dependencies-and-usage), [Parameter types](discovery/cucumber-ruby.md#parameter-types).
