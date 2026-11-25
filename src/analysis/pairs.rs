@@ -823,8 +823,7 @@ pub(super) fn definition_pair_candidates(
         }
     }
 
-    let mut builder =
-        CandidateBuilder::new(config.analysis_allowance(config.max_candidate_comparisons));
+    let mut builder = CandidateBuilder::new(config.candidate_allowance());
     for group in sorted_groups(normalized_matchers) {
         let mut exact_groups: HashMap<(&str, &str), Vec<usize>> = HashMap::new();
         for index in group {
@@ -977,7 +976,7 @@ pub(super) fn definition_pair_candidates(
         &behavior_events,
         &behavior_anchor_events,
         &mut builder,
-        config.mixed_analysis,
+        config.mixed_analysis(),
     );
     let census = builder.census(truncated_structural_classes.len());
     CandidateGeneration {

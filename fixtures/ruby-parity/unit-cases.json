@@ -1776,6 +1776,16 @@
     "src/discovery/mixed/tests.rs": {
       "tests": [
         {
+          "name": "mixed_selection_case_aliases_are_unresolved",
+          "requiredStatus": "rust-evidence",
+          "evidenceTest": {
+            "file": "src/discovery/mixed/tests.rs",
+            "name": "mixed_selection_case_aliases_are_unresolved"
+          },
+          "rationale": "A case-folded Cucumber.js path match withdraws exclusive mixed ownership when the runner can treat it as an alias.",
+          "behaviorClass": "ruby-behavior"
+        },
+        {
           "name": "mixed_selection_checks_observed_root_and_retained_path_limit",
           "requiredStatus": "rust-evidence",
           "evidenceTest": {
@@ -7514,6 +7524,26 @@
             "name": "mixed_pair_exports_share_the_full_record_allowance"
           },
           "rationale": "Mixed Ruby and JavaScript artifacts accept uneven scope sizes and reject overflow of the combined record allowance.",
+          "behaviorClass": "ruby-behavior"
+        },
+        {
+          "name": "mixed_suite_pair_limit_is_shared",
+          "requiredStatus": "rust-evidence",
+          "evidenceTest": {
+            "file": "tests/cli.rs",
+            "name": "mixed_suite_pair_limit_is_shared"
+          },
+          "rationale": "Mixed Ruby and JavaScript scopes use one combined comparison limit, including when neither scope has a pair.",
+          "behaviorClass": "ruby-behavior"
+        },
+        {
+          "name": "mixed_unresolved_features_disable_static_overlap_only",
+          "requiredStatus": "rust-evidence",
+          "evidenceTest": {
+            "file": "tests/cli.rs",
+            "name": "mixed_unresolved_features_disable_static_overlap_only"
+          },
+          "rationale": "Omitted mixed-suite features disable static overlap while retaining ambiguities proven by selected features.",
           "behaviorClass": "ruby-behavior"
         },
         {

@@ -32,6 +32,7 @@ pub(super) struct ConventionalCandidate {
     language: SourceLanguage,
     additional_features: Vec<PathBuf>,
     omitted_features: bool,
+    proven_framework_paths: bool,
 }
 
 impl ConventionalCandidate {
@@ -65,6 +66,8 @@ impl ConventionalCandidate {
             language,
             additional_features: Vec::new(),
             omitted_features: false,
+            proven_framework_paths: config.mixed_feature_selection
+                == MixedFeatureSelection::Framework,
         })
     }
 
@@ -98,6 +101,11 @@ impl ConventionalCandidate {
             self.additional_features.push(path.to_path_buf());
         }
         true
+    }
+
+    /// Withdraws exclusive ownership when a runner glob can match a case alias.
+    pub(super) fn withhold_framework_ownership(&mut self) {
+        self.proven_framework_paths = false;
     }
 
     /// Activates two-domain routing when both source selections and a conventional feature exist.
@@ -135,7 +143,7 @@ impl ConventionalCandidate {
         if self.omitted_features {
             bail!("discovery exceeds {MAX_DISCOVERY_SELECTED_FILES} selected files in the conventional feature tree");
         }
-        let framework_paths = config.mixed_feature_selection == MixedFeatureSelection::Framework;
+        let framework_paths = self.proven_framework_paths;
         for feature in &mut files.features {
             if !framework_paths || conventional_feature(&feature.path, &root) {
                 feature.owner = FeatureOwner::Unresolved;

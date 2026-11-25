@@ -256,7 +256,7 @@ cuke-dedup . \
 `--exclude` may be repeated or receive comma-separated patterns. The analysis-bound overrides
 `--max-candidate-comparisons` and `--max-structural-class-comparisons` are the CLI equivalents of the
 `maxCandidateComparisons` and `maxStructuralClassComparisons` config keys and are subject to the same
-hard safety ceilings.
+hard safety ceilings. In a mixed Ruby and Cucumber.js run, `maxCandidateComparisons` covers both suites. The conventional Ruby suite runs first and the configured Cucumber.js suite uses the remaining comparisons.
 
 Use `--explain-discovery` to show effective pattern origins, selected parsers, matching patterns,
 and definition inputs without changing report output. Use `--print-config` to print the fully

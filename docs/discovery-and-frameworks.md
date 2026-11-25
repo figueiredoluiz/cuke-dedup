@@ -15,7 +15,7 @@ How feature paths are read from Playwright-BDD, Cypress and Cucumber.js setup wh
 
 ## Corpus boundaries
 
-One analysis root is one comparison corpus. How to scope monorepos and feature-local registries, and why filtering features alone does not restrict definitions. Details: [discovery/corpus-boundaries.md](discovery/corpus-boundaries.md).
+An analysis root usually defines one comparison corpus. [Automatically discovered mixed Ruby and Cucumber.js suites](#cucumber-ruby) use separate comparison corpora and combine their findings in one report. For monorepos and feature-local registries, scope both features and definitions to the suite. Details: [discovery/corpus-boundaries.md](discovery/corpus-boundaries.md).
 
 ## Generated and non-source content
 

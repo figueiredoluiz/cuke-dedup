@@ -87,7 +87,8 @@ struct CheckOptions {
     #[arg(long, global = true)]
     require_definitions: bool,
 
-    /// Maximum unique definition pairs retained, up to the hard safety ceiling.
+    /// Maximum candidate comparisons across the run, up to the hard safety ceiling.
+    /// In mixed runs, the configured suite uses the remaining budget after the conventional suite.
     #[arg(long, global = true, value_name = "COUNT", value_parser = parse_positive_usize)]
     max_candidate_comparisons: Option<usize>,
 
@@ -538,7 +539,7 @@ fn extract_selected_corpora(
         .iter()
         .any(|file| file.owner == FeatureOwner::Unresolved);
     if unresolved {
-        let message = "mixed suites have unresolved feature ownership; those features were omitted and unused-definition findings are disabled".to_owned();
+        let message = "mixed suites have unresolved feature ownership; those features were omitted and unused-definition and static overlap findings are disabled".to_owned();
         if config.require_features {
             diagnostics.errors.push(message);
         } else {
@@ -625,7 +626,8 @@ fn analyze_selected_corpora(
     unused_limits: (usize, usize),
 ) -> Result<AnalyzedCorpus> {
     let mut scoped_config = config.clone();
-    scoped_config.mixed_analysis = extracted.len() > 1;
+    scoped_config.mixed_candidate_allowance =
+        (extracted.len() > 1).then_some(config.max_candidate_comparisons);
     let mut corpora = extracted.into_iter();
     let first = corpora
         .next()
@@ -638,6 +640,11 @@ fn analyze_selected_corpora(
         unused_limits,
     )?;
     for corpus in corpora {
+        scoped_config.mixed_candidate_allowance = Some(
+            config
+                .max_candidate_comparisons
+                .saturating_sub(result.census.candidate_comparisons_evaluated),
+        );
         if let Some(records) = records.as_deref_mut() {
             records.set_definition_offset(result.result.definitions.len());
         }
@@ -664,7 +671,7 @@ fn analyze_selected_corpora(
         result.corpus_incomplete |= next.corpus_incomplete;
         result.run_incomplete |= next.run_incomplete;
     }
-    if scoped_config.mixed_analysis {
+    if scoped_config.mixed_analysis() {
         result.result.findings.sort_by(|left, right| {
             (
                 &left.primary.path,
@@ -1076,6 +1083,12 @@ fn analyze_corpus(
     let (patterns, type_diagnostics) =
         analysis::merge_parameter_types(parameter_types, &config.parameter_types);
     effective_config.parameter_types = patterns;
+    if feature_ownership_incomplete {
+        // Omitted steps can exercise an overlap, but cannot invalidate a proven ambiguity.
+        effective_config
+            .rules
+            .insert(Rule::OverlappingMatcher, Severity::Off);
+    }
     corpus_incomplete |= !type_diagnostics.is_empty();
     diagnostics.warnings.extend(type_diagnostics);
     let config = &effective_config;
@@ -1122,7 +1135,7 @@ fn analyze_corpus(
         feature_files_without_steps,
         corpus_incomplete,
         run_incomplete,
-        mixed: config.mixed_analysis,
+        mixed: config.mixed_analysis(),
     })
 }
 

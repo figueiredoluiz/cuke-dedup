@@ -7362,12 +7362,24 @@ fn ruby_conventional_suite_runs_without_selection_flags() {
 /// Mixed runner inputs retain suite-local usage and fail closed on a shared feature path.
 #[test]
 fn mixed_default_discovery_preserves_suite_local_feature_usage() {
+    let case_alias_unused = if cfg!(any(windows, target_os = "macos")) {
+        &[][..]
+    } else {
+        &["features/steps.rb", "js-spec/steps.js"][..]
+    };
     for (framework_config, unused_paths) in [
         (
             Some(("cucumber.json", r#"{"default":{"paths":["js-spec/**/*.feature"]}}"#)),
             &["features/steps.rb", "js-spec/steps.js"][..],
         ),
+        (Some(("cucumber.json", r#"{"default":{"paths":["./js-spec/"]}}"#)), &["features/steps.rb", "js-spec/steps.js"][..]),
+        (Some(("cucumber.json", r#"{"default":{"paths":["js-spec/**/*.{feature,feature.md}"]}}"#)), &["features/steps.rb", "js-spec/steps.js"][..]),
+        (Some(("cucumber.json", r#"{"default":{"paths":["**/*.feature"]}}"#)), &[][..]),
+        (Some(("cucumber.json", r#"{"default":{"paths":[" js-spec/**/*.feature"]}}"#)), &[][..]),
         (Some(("cucumber.json", r#"{"default":{"paths":["js-spec/**/*.feature","features/**/*.feature"]}}"#)), &[][..]),
+        (Some(("cucumber.json", r#"{"default":{"paths":["js-spec/**/*.feature","FEATURES/ruby/**/*.feature"]}}"#)), case_alias_unused),
+        (Some(("cucumber.json", r#"{"default":{"paths":["js-spec/**/*.feature","features/+(ruby)/**/*.feature"]}}"#)), &[][..]),
+        (Some(("cucumber.json", r#"{"default":{"paths":["js-spec/**/*.feature","features/@(ruby|smoke)/**/*.feature"]}}"#)), &[][..]),
         (Some(("cucumber.json", r#"{"default":{"paths":{"dynamic":true}}}"#)), &[][..]),
         (Some(("cucumber.cjs", "const decoy = { paths: ['js-spec/**/*.feature'] }; module.exports = { default: () => chooseProfiles(process.env.MODE) };")), &[][..]),
         (Some(("cucumber.json", r#"{"paths":["js-spec/**/*.feature"]}"#)), &[][..]),
@@ -7384,7 +7396,7 @@ fn mixed_default_discovery_preserves_suite_local_feature_usage() {
             write(root, name, contents);
         }
         for rerun_path in ["@rerun.txt", "lists/@rerun.txt"] {
-            write(root, rerun_path, "features/ruby.feature:3\n");
+            write(root, rerun_path, "features/ruby/shared.feature:3\n");
         }
         write(
             root,
@@ -7406,7 +7418,7 @@ fn mixed_default_discovery_preserves_suite_local_feature_usage() {
             "elsewhere/steps.rb",
             "Given('shared match') { unrelated_work }\n",
         );
-        write(root, "features/ruby.feature", "Feature: ruby\n  Scenario: shared step\n    Given shared match\n    Given JS registration\n");
+        write(root, "features/ruby/shared.feature", "Feature: ruby\n  Scenario: shared step\n    Given shared match\n    Given JS registration\n");
         write(root, "js-spec/js.feature", "Feature: JS\n  Scenario: shared step\n    Given shared match\n    Given ruby registration\n");
         write(
             root,
@@ -7488,6 +7500,145 @@ fn mixed_default_discovery_preserves_suite_local_feature_usage() {
             assert!(!explicit.incomplete, "{}", explicit.stderr);
             assert_eq!(explicit.active, ["unused-definition"]);
         }
+    }
+}
+
+/// Mixed suites use one pair cap, including odd limits and suites with no possible pairs.
+#[test]
+fn mixed_suite_pair_limit_is_shared() {
+    let directory = tempfile::tempdir().unwrap();
+    let root = directory.path();
+    write(
+        root,
+        "cucumber.json",
+        r#"{"default":{"paths":["e2e/**/*.feature"]}}"#,
+    );
+    write(
+        root,
+        "features/ruby.feature",
+        "Feature: Ruby\n  Scenario: One\n    Given ruby value 1\n",
+    );
+    write(
+        root,
+        "e2e/js.feature",
+        "Feature: JS\n  Scenario: One\n    Given js value 1\n",
+    );
+    for (ruby_pair, js_pair, limit, expected_pairs, expected_code) in [
+        (false, false, "1", 0, 0),
+        (true, false, "1", 1, 1),
+        (false, true, "1", 1, 1),
+        (true, true, "1", 1, 2),
+        (true, true, "2", 2, 1),
+    ] {
+        let mut ruby = "Given('ruby value {int}') { ruby_work }\n".to_owned();
+        if ruby_pair {
+            ruby.push_str("Given('ruby value {int}') { other_ruby_work }\n");
+        }
+        write(root, "features/steps.rb", &ruby);
+        let mut js = "const { Given } = require('@cucumber/cucumber');\nGiven('js value {int}', () => jsWork());\n".to_owned();
+        if js_pair {
+            js.push_str("Given('js value {int}', () => otherJsWork());\n");
+        }
+        write(root, "e2e/steps.js", &js);
+
+        let output = Command::cargo_bin("cuke-dedup")
+            .unwrap()
+            .arg(root)
+            .args([
+                "--reporters",
+                "jsonl",
+                "--no-metrics",
+                "--fail-on-incomplete",
+            ])
+            .args(["--max-candidate-comparisons", limit])
+            .output()
+            .unwrap();
+        let rows = ruby_report_rows(&output.stdout);
+        let summary = rows.last().unwrap();
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        let case = format!("Ruby pair {ruby_pair}, JS pair {js_pair}, limit {limit}: {stderr}");
+        assert_eq!(
+            summary["analysis"]["candidateComparisonsEvaluated"], expected_pairs,
+            "{case}"
+        );
+        assert_eq!(
+            rows.iter()
+                .filter(|row| row["rule"] == "duplicate-matcher")
+                .count(),
+            expected_pairs,
+            "{case}"
+        );
+        assert_eq!(
+            summary["analysis"]["truncated"],
+            expected_code == 2,
+            "{case}"
+        );
+        assert_eq!(output.status.code(), Some(expected_code), "{case}");
+    }
+}
+
+/// Ambiguities in owned features survive omission of a shared feature; absence claims do not.
+#[test]
+fn mixed_unresolved_features_disable_static_overlap_only() {
+    let directory = tempfile::tempdir().unwrap();
+    let root = directory.path();
+    write(
+        root,
+        "features/ruby.feature",
+        "Feature: Ruby\n  Scenario: One\n    Given Ruby anchor\n",
+    );
+    write(
+        root,
+        "features/shared.feature",
+        "Feature: Shared\n  Scenario: One\n    Given value 1\n",
+    );
+    write(
+        root,
+        "features/steps.rb",
+        "Given('Ruby anchor') { ruby_work }\n",
+    );
+    write(
+        root,
+        "e2e/js.feature",
+        "Feature: JS\n  Scenario: One\n    Given live 1\n",
+    );
+    write(
+        root,
+        "e2e/steps.js",
+        concat!(
+            "const { Given } = require('@cucumber/cucumber');\n",
+            "Given('value {int}', () => exprWork());\n",
+            "Given(/^value 1$/, () => regexWork());\n",
+            "Given('live {int}', () => liveExprWork());\n",
+            "Given(/^live 1$/, () => liveRegexWork());\n",
+        ),
+    );
+
+    for shared in [false, true] {
+        let paths = if shared {
+            serde_json::json!(["e2e/**/*.feature", "features/shared.feature"])
+        } else {
+            serde_json::json!(["e2e/**/*.feature"])
+        };
+        write(
+            root,
+            "cucumber.json",
+            &serde_json::json!({"default": {"paths": paths}}).to_string(),
+        );
+        let run = ruby_run(root, &["--fail-on-incomplete"]);
+        assert_eq!(run.incomplete, shared, "{}", run.stderr);
+        assert_eq!(run.code, Some(if shared { 2 } else { 1 }), "{}", run.stderr);
+        assert!(
+            run.active.iter().any(|rule| rule == "ambiguous-step"),
+            "{:?}",
+            run.active
+        );
+        assert_eq!(
+            run.active.iter().any(|rule| rule == "overlapping-matcher"),
+            !shared,
+            "{:?}",
+            run.active
+        );
     }
 }
 

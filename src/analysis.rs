@@ -161,7 +161,7 @@ pub(crate) fn analyze_for_cli(
         definitions,
         feature_steps,
         config,
-        !config.mixed_analysis,
+        !config.mixed_analysis(),
         Some(indirect_usage),
         pair_records,
         unused_limits,
@@ -226,7 +226,7 @@ fn analyze_internal(
         pair_records,
     );
     let overlap_budget = config
-        .analysis_allowance(config.max_candidate_comparisons)
+        .candidate_allowance()
         .saturating_sub(pair_analysis.census.candidate_comparisons_evaluated);
     let mut usage = usage::analyze_feature_usage(
         &definitions,

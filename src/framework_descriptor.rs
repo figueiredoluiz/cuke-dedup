@@ -293,7 +293,7 @@ fn cucumber_config(
     let (paths, default_array) = read_paths(&text, extension)?;
     let literal_default_paths = default_array
         && matches!(&paths, LiteralProperty::Strings(values) if !values.is_empty()
-            && values.iter().all(|value| direct_project_path(value)));
+            && values.iter().all(|value| ownership_path(root, value)));
     let mut warnings = Vec::new();
     let patterns = match paths {
         LiteralProperty::Missing => vec![CUCUMBER_DEFAULT.to_owned()],
@@ -314,19 +314,45 @@ fn cucumber_config(
     })
 }
 
-/// Allows runner paths with no indirect list, normalization ambiguity, or project escape.
-fn direct_project_path(value: &str) -> bool {
-    !value.is_empty()
-        && value.trim() == value
-        && !value.starts_with('/')
-        && !value.contains('\\')
-        && !value.split('/').any(|part| part == "..")
-        && !value
-            .trim_end_matches('/')
-            .rsplit('/')
-            .next()
-            .is_some_and(|filename| filename.starts_with('@'))
-        && !Path::new(value).is_absolute()
+/// Restricts exclusive ownership proof to project-relative literals and common recursive feature
+/// globs. Other path expressions still go through ordinary feature discovery.
+fn ownership_path(root: &Path, value: &str) -> bool {
+    let relative = root_relative(value);
+    let path = relative.trim_end_matches('/');
+    if value.trim() != value || Path::new(path).has_root() {
+        return false;
+    }
+    let (parents, name) = path.rsplit_once('/').unwrap_or(("", path));
+    let recursive = parents == "**" || parents.ends_with("/**");
+    let parents = if parents == "**" {
+        ""
+    } else {
+        parents.strip_suffix("/**").unwrap_or(parents)
+    };
+    if !parents.is_empty() && !parents.split('/').all(literal_path_component) {
+        return false;
+    }
+    if recursive {
+        return matches!(
+            name,
+            "*.feature" | "*.feature.md" | "*.{feature,feature.md}"
+        );
+    }
+    // Cucumber expands extensionless selections as directories. A dotted directory is not
+    // equivalent to a Cucumber path expanded by our general discovery.
+    literal_path_component(name)
+        && (!name.contains('.')
+            || ((name.ends_with(".feature") || name.ends_with(".feature.md"))
+                && !root.join(path).is_dir()))
+}
+
+/// A component with no glob, rerun-list, line-suffix, or platform-specific syntax.
+fn literal_path_component(part: &str) -> bool {
+    !part.is_empty()
+        && !part.starts_with('.')
+        && part
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'.' | b'-' | b'_'))
 }
 
 /// Drops initially blank inputs and negated paths, normalizes prefixes and numeric line suffixes, and

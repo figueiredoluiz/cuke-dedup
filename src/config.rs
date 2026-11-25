@@ -293,7 +293,7 @@ pub struct Config {
     #[serde(skip)]
     pub(crate) mixed_feature_selection: MixedFeatureSelection,
     #[serde(skip)]
-    pub(crate) mixed_analysis: bool,
+    pub(crate) mixed_candidate_allowance: Option<usize>,
 }
 
 /// Whether automatic analysis can assign a feature to a configured framework.
@@ -563,7 +563,7 @@ impl Config {
             output_from_project_config: false,
             explicit_config_file: false,
             mixed_feature_selection: MixedFeatureSelection::Disabled,
-            mixed_analysis: false,
+            mixed_candidate_allowance: None,
         }
     }
 
@@ -792,9 +792,20 @@ impl Config {
         Ok(())
     }
 
-    /// Divides cumulative analysis allowances across the two mixed scopes.
+    /// Reports whether the CLI is analyzing independent conventional and configured suites.
+    pub(crate) fn mixed_analysis(&self) -> bool {
+        self.mixed_candidate_allowance.is_some()
+    }
+
+    /// Returns the remaining combined comparison budget for this suite.
+    pub(crate) fn candidate_allowance(&self) -> usize {
+        self.mixed_candidate_allowance
+            .unwrap_or(self.max_candidate_comparisons)
+    }
+
+    /// Divides independent safety allowances across the two mixed scopes.
     pub(crate) fn analysis_allowance(&self, limit: usize) -> usize {
-        if self.mixed_analysis {
+        if self.mixed_analysis() {
             limit / 2
         } else {
             limit
@@ -803,7 +814,7 @@ impl Config {
 
     /// The corresponding share for counters that use 64-bit work units.
     pub(crate) fn analysis_work_allowance(&self, limit: u64) -> u64 {
-        if self.mixed_analysis {
+        if self.mixed_analysis() {
             limit / 2
         } else {
             limit

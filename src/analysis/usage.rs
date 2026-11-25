@@ -983,7 +983,7 @@ fn analyze_matcher_overlap(
     scan_work: usize,
 ) -> OverlapOutcome {
     let severity = config.severity(Rule::OverlappingMatcher);
-    if severity == Severity::Off {
+    if severity == Severity::Off || definitions.len() < 2 {
         return OverlapOutcome {
             census: CandidateSourceCensus::default(),
             incomplete: None,
@@ -1007,9 +1007,11 @@ fn analyze_matcher_overlap(
     let mut samples = HashMap::new();
     // Scanning a witness evaluates no comparison, so it is bounded by the configured limit rather
     // than by what the pair stage left: at an exact limit, witnesses that accept nothing complete.
-    let witness_scan_budget = config
-        .analysis_allowance(config.max_candidate_comparisons)
-        .saturating_mul(OVERLAP_PROPOSAL_WORK_MULTIPLIER);
+    let witness_scan_budget = config.analysis_allowance(
+        config
+            .max_candidate_comparisons
+            .saturating_mul(OVERLAP_PROPOSAL_WORK_MULTIPLIER),
+    );
     for (left, definition) in definitions.iter().enumerate() {
         if !summaries[left].authoritative {
             continue;
