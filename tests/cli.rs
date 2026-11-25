@@ -7359,6 +7359,499 @@ fn ruby_conventional_suite_runs_without_selection_flags() {
     assert_eq!(rows[0]["primary"]["line"], 3);
 }
 
+/// Mixed runner inputs retain suite-local usage and fail closed on a shared feature path.
+#[test]
+fn mixed_default_discovery_preserves_suite_local_feature_usage() {
+    for (framework_config, unused_paths) in [
+        (
+            Some(("cucumber.json", r#"{"default":{"paths":["js-spec/**/*.feature"]}}"#)),
+            &["features/steps.rb", "js-spec/steps.js"][..],
+        ),
+        (Some(("cucumber.json", r#"{"default":{"paths":["js-spec/**/*.feature","features/**/*.feature"]}}"#)), &[][..]),
+        (Some(("cucumber.json", r#"{"default":{"paths":{"dynamic":true}}}"#)), &[][..]),
+        (Some(("cucumber.cjs", "const decoy = { paths: ['js-spec/**/*.feature'] }; module.exports = { default: () => chooseProfiles(process.env.MODE) };")), &[][..]),
+        (Some(("cucumber.json", r#"{"paths":["js-spec/**/*.feature"]}"#)), &[][..]),
+        (Some(("cucumber.json", r#"{"default":{"paths":[]}}"#)), &[][..]),
+        (Some(("cucumber.json", r#"{"default":{"paths":["js-spec/**/*.feature","@rerun.txt"]}}"#)), &[][..]),
+        (Some(("cucumber.json", r#"{"default":{"paths":["js-spec/**/*.feature","lists/@rerun.txt"]}}"#)), &[][..]),
+        (Some(("cucumber.json", r#"{"default":{"paths":["js-spec/**/*.feature","lists/@rerun.txt/"]}}"#)), &[][..]),
+        (None, &[][..]),
+    ] {
+        let incomplete = unused_paths.is_empty();
+        let directory = tempfile::tempdir().unwrap();
+        let root = directory.path();
+        if let Some((name, contents)) = framework_config {
+            write(root, name, contents);
+        }
+        for rerun_path in ["@rerun.txt", "lists/@rerun.txt"] {
+            write(root, rerun_path, "features/ruby.feature:3\n");
+        }
+        write(
+            root,
+            ".cuke-dedupignore",
+            "features/ignored.feature\nfeatures/ignored.rb\n",
+        );
+        write(
+            root,
+            "features/ignored.feature",
+            "Feature: ignored\n  Scenario: unused control\n    Given ruby registration\n",
+        );
+        write(
+            root,
+            "features/ignored.rb",
+            "Given('shared match') { ignored_work }\n",
+        );
+        write(
+            root,
+            "elsewhere/steps.rb",
+            "Given('shared match') { unrelated_work }\n",
+        );
+        write(root, "features/ruby.feature", "Feature: ruby\n  Scenario: shared step\n    Given shared match\n    Given JS registration\n");
+        write(root, "js-spec/js.feature", "Feature: JS\n  Scenario: shared step\n    Given shared match\n    Given ruby registration\n");
+        write(
+            root,
+            "features/steps.rb",
+            concat!(
+                "require_relative '../support/bootstrap.rb'\n",
+                "Given('shared match') { load_work }\n",
+                "Given('ruby registration') { ruby_work }\n",
+            ),
+        );
+        write(root, "support/leaf.rb", "# registration provider\n");
+        #[cfg(unix)]
+        {
+            write(root, "support/bootstrap", "require_relative 'leaf'\n");
+            std::os::unix::fs::symlink("bootstrap", root.join("support/bootstrap.rb")).unwrap();
+        }
+        #[cfg(not(unix))]
+        write(root, "support/bootstrap.rb", "require_relative 'leaf'\n");
+        write(root, "js-spec/steps.js", "const { Given } = require('@cucumber/cucumber');\nGiven('shared match', () => jsWork());\nGiven('JS registration', () => registration());\n");
+
+        let mut command = Command::cargo_bin("cuke-dedup").unwrap();
+        command.current_dir(root);
+        if incomplete {
+            command.arg("--fail-on-incomplete");
+        }
+        let output = command
+            .args([
+                "--reporters",
+                "jsonl",
+                "--no-metrics",
+                "--explain-discovery",
+            ])
+            .output()
+            .unwrap();
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        let rows = ruby_report_rows(&output.stdout);
+        let summary = rows.last().unwrap();
+        assert_eq!(
+            summary["summary"]["definitionsAnalyzed"], 4,
+            "{framework_config:?}: {stderr}"
+        );
+        assert_eq!(
+            summary["corpus"]["incomplete"], incomplete,
+            "{framework_config:?}: {stderr}"
+        );
+        assert_eq!(output.status.code(), Some(if incomplete { 2 } else { 0 }));
+        let findings: Vec<_> = rows[..rows.len() - 1]
+            .iter()
+            .map(|row| {
+                assert_eq!(row["rule"], "unused-definition", "{framework_config:?}: {row}");
+                assert_eq!(row["active"], true);
+                row["primary"]["path"].as_str().unwrap()
+            })
+            .collect();
+        assert_eq!(findings, unused_paths);
+        for ignored in [
+            "features/ignored.feature",
+            "features/ignored.rb",
+            "elsewhere/steps.rb",
+        ] {
+            assert!(!stderr.contains(ignored), "{stderr}");
+        }
+        if incomplete {
+            assert!(stderr.contains("feature ownership"), "{stderr}");
+            assert!(stderr.contains("(unresolved suite ownership)"), "{stderr}");
+        } else {
+            assert!(stderr.contains("(conventional suite)"), "{stderr}");
+            assert!(stderr.contains("(configured suite)"), "{stderr}");
+            Command::cargo_bin("cuke-dedup")
+                .unwrap()
+                .current_dir(root)
+                .assert()
+                .success()
+                .stdout(predicate::str::contains(
+                    "Analyzed 4 definitions and 4 feature steps",
+                ));
+            let explicit = ruby_run(root, &["--features", "js-spec/**/*.feature"]);
+            assert_eq!(explicit.definitions, 2, "{}", explicit.stderr);
+            assert!(!explicit.incomplete, "{}", explicit.stderr);
+            assert_eq!(explicit.active, ["unused-definition"]);
+        }
+    }
+}
+
+/// Candidate budgets and serialized pair evidence stay consistent across isolated suites.
+#[test]
+fn mixed_suites_preserve_pairs_and_git_baseline_outcomes() {
+    let directory = tempfile::tempdir().unwrap();
+    let root = directory.path();
+    write(
+        root,
+        "cucumber.json",
+        r#"{"default":{"paths":["e2e/**/*.feature"],"require":["e2e/steps.js","z-spec/steps.js"]}}"#,
+    );
+    let feature = "Feature: local pair\n  Scenario: matches\n    Given shared text\n";
+    write(root, "features/ruby.feature", feature);
+    write(root, "e2e/js.feature", feature);
+    write(
+        root,
+        "features/steps.rb",
+        "Given('shared text') { first_work }\nGiven('shared text') { second_work }\n",
+    );
+    for (path, handler) in [
+        ("e2e/steps.js", "firstWork"),
+        ("z-spec/steps.js", "secondWork"),
+    ] {
+        write(
+            root, path,
+            &format!("const {{ Given }} = require('@cucumber/cucumber');\nGiven('shared text', () => {handler}());\n"),
+        );
+    }
+    init_repository(root);
+
+    let args = ["--max-candidate-comparisons", "2"];
+    let pairs = emitted_pairs(root, &args);
+    let fingerprints = emitted_records(root, &args, "--emit-fingerprints");
+    assert_eq!(pairs.len(), 2, "{pairs:?}");
+    assert_eq!(fingerprints.len(), 4, "{fingerprints:?}");
+    let definition_paths: Vec<_> = fingerprints
+        .iter()
+        .map(|record| record["path"].as_str().unwrap())
+        .collect();
+    let pair_paths: Vec<_> = pairs
+        .iter()
+        .map(|record| {
+            (
+                record["left"]["path"].as_str().unwrap(),
+                record["right"]["path"].as_str().unwrap(),
+            )
+        })
+        .collect();
+    assert_eq!(
+        (definition_paths, pair_paths),
+        (
+            vec![
+                "e2e/steps.js",
+                "features/steps.rb",
+                "features/steps.rb",
+                "z-spec/steps.js"
+            ],
+            vec![
+                ("e2e/steps.js", "z-spec/steps.js"),
+                ("features/steps.rb", "features/steps.rb")
+            ],
+        )
+    );
+    for pair in &pairs {
+        assert!(pair["rules"]
+            .as_array()
+            .unwrap()
+            .contains(&serde_json::json!("duplicate-matcher")));
+        for side in [&pair["left"], &pair["right"]] {
+            assert!(
+                fingerprints.iter().any(|record| {
+                    record["path"] == side["path"]
+                        && record["line"] == side["line"]
+                        && record["column"] == side["column"]
+                        && record["definitionFingerprint"] == side["definitionFingerprint"]
+                }),
+                "{side}"
+            );
+        }
+    }
+
+    let current = ruby_run(root, &["--fail-on-incomplete"]);
+    assert_eq!(current.code, Some(1), "{}", current.stderr);
+    assert_eq!(
+        current
+            .active
+            .iter()
+            .filter(|rule| *rule == "duplicate-matcher")
+            .count(),
+        2
+    );
+    let baseline = ruby_run(
+        root,
+        &["--baseline-from-ref", "HEAD", "--fail-on-incomplete"],
+    );
+    assert_eq!(baseline.code, Some(0), "{}", baseline.stderr);
+    assert_eq!(baseline.definitions, 4);
+    assert!(baseline.active.is_empty(), "{:?}", baseline.active);
+    assert_eq!(baseline.suppressed, current.active);
+}
+
+/// An empty configured suite cannot satisfy feature requirements or publish a partial baseline.
+#[test]
+fn mixed_current_run_reports_a_suite_without_features() {
+    let directory = tempfile::tempdir().unwrap();
+    let root = directory.path();
+    write(
+        root,
+        "cucumber.json",
+        r#"{"default":{"paths":["e2e/**/*.feature"]}}"#,
+    );
+    write(
+        root,
+        "features/ruby.feature",
+        "Feature: Ruby\n  Scenario: matches\n    Given ruby step\n",
+    );
+    write(
+        root,
+        "features/steps.rb",
+        "Given('ruby step') { ruby_work }\nGiven('unused Ruby step') { unused_work }\n",
+    );
+    write(
+        root,
+        "e2e/steps.js",
+        "const { Given } = require('@cucumber/cucumber');\nGiven('JS step', () => jsWork());\n",
+    );
+    let baseline = r#"{"schemaVersion":3,"fingerprints":{}}"#;
+    write(root, "baseline.json", baseline);
+
+    for (extra, code) in [
+        (&[][..], Some(0)),
+        (&["--require-features"][..], Some(2)),
+        (&["--fail-on-incomplete"][..], Some(2)),
+        (
+            &["--baseline", "baseline.json", "--update-baseline"][..],
+            Some(0),
+        ),
+    ] {
+        let output = Command::cargo_bin("cuke-dedup")
+            .unwrap()
+            .current_dir(root)
+            .args(["--reporters", "jsonl", "--no-metrics"])
+            .args(extra)
+            .output()
+            .unwrap();
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert_eq!(output.status.code(), code, "{extra:?}: {stderr}");
+        assert!(
+            stderr.contains("configured suite has no discovered feature files"),
+            "{extra:?}: {stderr}"
+        );
+        let rows = ruby_report_rows(&output.stdout);
+        assert_eq!(rows.last().unwrap()["corpus"]["incomplete"], true);
+        assert_eq!(rows.len(), 2, "{rows:?}");
+        assert_eq!(rows[0]["rule"], "unused-definition");
+        assert_eq!(rows[0]["primary"]["path"], "features/steps.rb");
+        assert_eq!(
+            fs::read_to_string(root.join("baseline.json")).unwrap(),
+            baseline
+        );
+    }
+}
+
+/// A baseline allowance for identical text stays in its own comparison domain.
+#[test]
+fn mixed_baselines_do_not_transfer_allowances_between_suites() {
+    let directory = tempfile::tempdir().unwrap();
+    let root = directory.path();
+    write(
+        root,
+        "cucumber.json",
+        r#"{"default":{"paths":["e2e/**/*.feature"]}}"#,
+    );
+    write(root, "features/steps.rb", "Given('shared text') { ruby_work }\nGiven('Ruby anchor') { anchor }\nGiven('known Ruby finding') { known_work }\n");
+    write(root, "e2e/steps.js", "const { Given } = require('@cucumber/cucumber');\nGiven('shared text', () => jsWork());\nGiven('JS anchor', () => anchor());\nGiven('known JS finding', () => knownWork());\n");
+    let ruby_case = "Feature: Ruby\n  Scenario: matches\n    Given Ruby anchor\n";
+    let js_case = "Feature: JS\n  Scenario: matches\n    Given JS anchor\n";
+    write(root, "features/ruby.feature", ruby_case);
+    write(
+        root,
+        "e2e/js.feature",
+        &format!("{js_case}    And shared text\n"),
+    );
+    init_repository(root);
+    Command::cargo_bin("cuke-dedup")
+        .unwrap()
+        .current_dir(root)
+        .args([
+            "--baseline",
+            "baseline.json",
+            "--update-baseline",
+            "--fail-on-incomplete",
+        ])
+        .assert()
+        .success();
+
+    write(
+        root,
+        "features/ruby.feature",
+        &format!("{ruby_case}    And shared text\n"),
+    );
+    write(root, "e2e/js.feature", js_case);
+    for input in [
+        ["--baseline-from-ref", "HEAD"],
+        ["--baseline", "baseline.json"],
+    ] {
+        let output = Command::cargo_bin("cuke-dedup")
+            .unwrap()
+            .current_dir(root)
+            .args(input)
+            .args(["--fail-on-new", "--reporters", "jsonl", "--no-metrics"])
+            .output()
+            .unwrap();
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert_eq!(output.status.code(), Some(1), "{input:?}: {stderr}");
+        let rows = ruby_report_rows(&output.stdout);
+        let findings: Vec<_> = rows
+            .iter()
+            .filter(|row| row["rule"] == "unused-definition")
+            .map(|row| {
+                (
+                    row["primary"]["path"].as_str().unwrap(),
+                    row["active"].as_bool().unwrap(),
+                )
+            })
+            .collect();
+        assert_eq!(
+            findings,
+            [
+                ("e2e/steps.js", true),
+                ("e2e/steps.js", false),
+                ("features/steps.rb", false)
+            ],
+            "{input:?}: {rows:?}"
+        );
+    }
+}
+
+/// A complete Ruby reference cannot supply missing historical evidence for the JS suite.
+#[test]
+fn mixed_baseline_rejects_missing_configured_suite_evidence() {
+    let feature = "Feature: local suite\n  Scenario: matches\n    Given shared text\n";
+    let registered =
+        "const { Given } = require('@cucumber/cucumber');\nGiven('shared text', () => jsWork());\n";
+    for (historical_source, historical_feature, diagnostic) in [
+        (
+            registered,
+            None,
+            "configured suite has no discovered feature files",
+        ),
+        (
+            "const helper = 42;\n",
+            Some(feature),
+            "configured suite kept no step definitions",
+        ),
+    ] {
+        let directory = tempfile::tempdir().unwrap();
+        let root = directory.path();
+        write(
+            root,
+            "cucumber.json",
+            r#"{"default":{"paths":["e2e/**/*.feature"]}}"#,
+        );
+        write(root, "features/ruby.feature", feature);
+        write(
+            root,
+            "features/steps.rb",
+            "Given('shared text') { ruby_work }\n",
+        );
+        write(root, "e2e/steps.js", historical_source);
+        if let Some(historical_feature) = historical_feature {
+            write(root, "e2e/js.feature", historical_feature);
+        }
+        init_repository(root);
+        write(root, "e2e/steps.js", registered);
+        write(root, "e2e/js.feature", feature);
+        for extra in [&[][..], &["--fail-on-incomplete"][..]] {
+            Command::cargo_bin("cuke-dedup")
+                .unwrap()
+                .current_dir(root)
+                .args(["--baseline-from-ref", "HEAD"])
+                .args(extra)
+                .assert()
+                .code(2)
+                .stderr(
+                    predicate::str::contains("baseline revision `HEAD` is incomplete")
+                        .and(predicate::str::contains(diagnostic)),
+                );
+        }
+    }
+}
+
+/// Uneven scopes can fill the shared pair export limit, which still rejects a combined overflow.
+#[test]
+fn mixed_pair_exports_share_the_full_record_allowance() {
+    use std::io::{BufRead, BufReader};
+
+    for (js_count, accepted) in [(317, true), (447, false)] {
+        let directory = tempfile::tempdir().unwrap();
+        let root = directory.path();
+        write(
+            root,
+            "cucumber.json",
+            r#"{"default":{"paths":["e2e/**/*.feature"]}}"#,
+        );
+        write(
+            root,
+            "features/ruby.feature",
+            "Feature: Ruby\n  Scenario: matches\n    Given ruby match 0\n",
+        );
+        write(
+            root,
+            "e2e/js.feature",
+            "Feature: JS\n  Scenario: matches\n    Given js match 0\n",
+        );
+        let ruby_count = 26;
+        let ruby: String = (0..ruby_count)
+            .map(|index| format!("Given('ruby match {index}') {{ page.perform({index}) }}\n"))
+            .collect();
+        write(root, "features/steps.rb", &ruby);
+        let mut source = "const { Given } = require('@cucumber/cucumber');\n".to_owned();
+        for index in 0..js_count {
+            source.push_str(&format!(
+                "Given('js match {index}', () => {{ page.perform({index}); }});\n"
+            ));
+        }
+        write(root, "e2e/steps.js", &source);
+        let mut command = Command::cargo_bin("cuke-dedup").unwrap();
+        command.current_dir(root).args([
+            "--fail-on-incomplete",
+            "--rule",
+            "duplicate-matcher=off",
+            "--rule",
+            "ambiguous-step=off",
+            "--rule",
+            "parameterization-candidate=off",
+            "--rule",
+            "near-duplicate-step=off",
+            "--rule",
+            "unused-definition=off",
+            "--emit-pairs",
+            "pairs.jsonl",
+        ]);
+        let artifact = root.join("pairs.jsonl");
+        if accepted {
+            command.assert().success();
+            let records = BufReader::new(fs::File::open(artifact).unwrap())
+                .lines()
+                .count();
+            assert_eq!(
+                records,
+                js_count * (js_count - 1) / 2 + ruby_count * (ruby_count - 1) / 2
+            );
+        } else {
+            command.assert().code(2).stderr(predicate::str::contains(
+                "pair record limit exceeded (100000)",
+            ));
+            assert!(!artifact.exists());
+        }
+    }
+}
+
 /// Custom runner inputs and features outside the suite leave explicit Ruby selection available.
 #[test]
 fn ruby_conventional_discovery_requires_unambiguous_runner_inputs() {
@@ -7571,7 +8064,7 @@ fn ruby_load_roots_require_explicit_configuration_only_when_external() {
     }
 }
 
-/// Checks broad patterns preserve TypeScript selection, Ruby requires suffix opt-in for explicit patterns, and mixed explicit selections fail.
+/// Checks explicit glob behavior and automatic discovery when a feature has two potential owners.
 #[test]
 fn regression_ruby_release_broad_glob_keeps_typescript_selection() {
     let directory = tempfile::tempdir().unwrap();
@@ -7581,7 +8074,7 @@ fn regression_ruby_release_broad_glob_keeps_typescript_selection() {
         "features/support/steps.ts",
         "import { Given } from '@cucumber/cucumber';\nGiven('a user exists', () => createUser());\nGiven('a user exists', () => createUser());\n",
     );
-    // A Ruby helper next to TypeScript steps was ignored before Ruby support existed.
+    // Both runners can select the same feature under their conventional root.
     write(
         root,
         "features/support/env.rb",
@@ -7595,7 +8088,6 @@ fn regression_ruby_release_broad_glob_keeps_typescript_selection() {
     for (pattern, definitions, skipped, mixed) in [
         (Some("features/support/**"), 2, true, false),
         (Some("features/**/*"), 2, true, false),
-        (None, 2, false, false),
         (Some("features/**/*.rb"), 1, false, false),
         (Some("features/**/env.rb,features/**/*.ts"), 0, false, true),
     ] {
@@ -7615,6 +8107,19 @@ fn regression_ruby_release_broad_glob_keeps_typescript_selection() {
         assert_eq!(run.code == Some(2), mixed, "{pattern:?}");
         assert!(!run.stderr.contains("matched no files"), "{pattern:?}");
     }
+
+    let automatic = ruby_release_run(root, None);
+    assert_eq!(automatic.definitions, 3, "{}", automatic.stderr);
+    assert!(automatic.incomplete, "{}", automatic.stderr);
+    assert!(automatic.stderr.contains("feature ownership"));
+    assert!(automatic
+        .active
+        .iter()
+        .any(|rule| rule == "duplicate-matcher"));
+    assert!(automatic
+        .active
+        .iter()
+        .all(|rule| rule != "ambiguous-step" && rule != "unused-definition"));
 
     let ruby_only = tempfile::tempdir().unwrap();
     write(ruby_only.path(), "features/steps.rb", RUBY_RELEASE_STEPS);

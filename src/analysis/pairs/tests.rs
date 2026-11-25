@@ -131,7 +131,14 @@ fn insert_blocking_candidates(definitions: &[StepDefinition], builder: &mut Cand
     let classes = comparison_classes(definitions);
     let events = behavior_event_ids(definitions);
     let anchor_events = behavior_anchor_event_ids(definitions);
-    insert_matcher_blocking_candidates(definitions, &classes, &events, &anchor_events, builder);
+    insert_matcher_blocking_candidates(
+        definitions,
+        &classes,
+        &events,
+        &anchor_events,
+        builder,
+        false,
+    );
 }
 
 /// Inserting a source sets only its own flag; a normalized-matcher-only set cannot feed near.

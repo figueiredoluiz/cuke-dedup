@@ -9,8 +9,9 @@ use crate::model::{
     FeatureStep, Finding, FindingEvidence, MatcherKind, Rule, Severity, StepDefinition,
 };
 use crate::resource_limits::{
-    compile_regex_with_limits, MAX_DIRECT_MATCH_CACHE_BYTES, MAX_REGEX_PATTERN_BYTES,
-    MAX_STATIC_OVERLAP_FINDINGS,
+    compile_regex_with_limits, MAX_AMBIGUITY_GROUPS, MAX_AMBIGUITY_MEMBERSHIPS,
+    MAX_AMBIGUITY_PAYLOAD_BYTES, MAX_DIRECT_MATCHES, MAX_DIRECT_MATCH_CACHE_BYTES,
+    MAX_DIRECT_MATCH_SCANS, MAX_REGEX_PATTERN_BYTES, MAX_STATIC_OVERLAP_FINDINGS,
 };
 use cucumber_expressions::expand::IntoRegexCharIter;
 use regex::Regex;
@@ -633,11 +634,18 @@ fn analyze_feature_usage_in_windows(
         findings,
         overlap_budget,
         window,
-        AmbiguityBudget::default(),
-        MatchingBudget::default(),
+        AmbiguityBudget::new(
+            config.analysis_allowance(MAX_AMBIGUITY_MEMBERSHIPS),
+            config.analysis_allowance(MAX_AMBIGUITY_GROUPS),
+            config.analysis_allowance(MAX_AMBIGUITY_PAYLOAD_BYTES),
+        ),
+        MatchingBudget::new(
+            config.analysis_allowance(MAX_DIRECT_MATCH_SCANS),
+            config.analysis_allowance(MAX_DIRECT_MATCHES),
+        ),
         MAX_DIRECT_MATCH_CACHE_BYTES,
-        MAX_ROW_MATCHES,
-        MAX_USAGE_SUPPRESSION_WORK,
+        config.analysis_allowance(MAX_ROW_MATCHES),
+        config.analysis_work_allowance(MAX_USAGE_SUPPRESSION_WORK),
     )
 }
 
@@ -1000,7 +1008,7 @@ fn analyze_matcher_overlap(
     // Scanning a witness evaluates no comparison, so it is bounded by the configured limit rather
     // than by what the pair stage left: at an exact limit, witnesses that accept nothing complete.
     let witness_scan_budget = config
-        .max_candidate_comparisons
+        .analysis_allowance(config.max_candidate_comparisons)
         .saturating_mul(OVERLAP_PROPOSAL_WORK_MULTIPLIER);
     for (left, definition) in definitions.iter().enumerate() {
         if !summaries[left].authoritative {
@@ -1041,7 +1049,9 @@ fn analyze_matcher_overlap(
     let mut considered = HashSet::new();
     let mut evaluated = 0_usize;
     let mut retained = 0_usize;
-    let mut evidence_remaining = MAX_FINDING_EVIDENCE_BYTES;
+    let mut evidence_remaining = config.analysis_allowance(MAX_FINDING_EVIDENCE_BYTES);
+    let finding_limit = config.analysis_allowance(MAX_STATIC_OVERLAP_FINDINGS);
+    let suppression_limit = config.analysis_work_allowance(MAX_OVERLAP_SUPPRESSION_WORK);
     let mut truncated = scan_truncated || overflow;
     let mut suppression_work = 0_u64;
     'definitions: for ((left, witness), accepted) in witnesses.iter().zip(proposals.iter()) {
@@ -1063,7 +1073,7 @@ fn analyze_matcher_overlap(
             if proven.contains(pair.0, pair.1) {
                 continue;
             }
-            if retained == MAX_STATIC_OVERLAP_FINDINGS {
+            if retained == finding_limit {
                 truncated = true;
                 break 'definitions;
             }
@@ -1072,7 +1082,7 @@ fn analyze_matcher_overlap(
                 truncated = true;
                 break 'definitions;
             };
-            if next_suppression_work > MAX_OVERLAP_SUPPRESSION_WORK {
+            if next_suppression_work > suppression_limit {
                 truncated = true;
                 break 'definitions;
             }

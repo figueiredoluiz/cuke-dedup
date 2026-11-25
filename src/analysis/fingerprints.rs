@@ -81,7 +81,13 @@ fn record<'a>(definition: &'a StepDefinition, root: &Path) -> impl Serialize + '
     }
 }
 
-/// Writes one compact JSON line per definition, in the order given.
+/// The ordering shared by definition and pair evidence.
+pub(super) fn definition_position(definition: &StepDefinition) -> (&Path, usize, usize) {
+    let location = &definition.location;
+    (&location.path, location.line, location.column)
+}
+
+/// Writes one compact JSON line per definition in source order.
 pub(crate) fn write_fingerprints(
     definitions: &[StepDefinition],
     root: &Path,
@@ -109,7 +115,9 @@ pub(super) fn write_fingerprints_with_limits(
         inner: out,
         remaining: max_bytes,
     };
-    for definition in definitions {
+    let mut ordered: Vec<_> = definitions.iter().collect();
+    ordered.sort_by_key(|definition| definition_position(definition));
+    for definition in ordered {
         serde_json::to_writer(&mut writer, &record(definition, root))?;
         writer.write_all(b"\n")?;
     }

@@ -1773,8 +1773,39 @@
         }
       ]
     },
+    "src/discovery/mixed/tests.rs": {
+      "tests": [
+        {
+          "name": "mixed_selection_checks_observed_root_and_retained_path_limit",
+          "requiredStatus": "rust-evidence",
+          "evidenceTest": {
+            "file": "src/discovery/mixed/tests.rs",
+            "name": "mixed_selection_checks_observed_root_and_retained_path_limit"
+          },
+          "rationale": "The conventional Ruby suite stays unselected without an observed root and fails closed when the retained path count exceeds the limit.",
+          "behaviorClass": "ruby-behavior"
+        }
+      ]
+    },
     "src/cli/tests.rs": {
       "tests": [
+        {
+          "name": "mixed_extraction_requires_proven_feature_ownership_and_definitions",
+          "requiredStatus": "rust-evidence",
+          "evidenceTest": {
+            "file": "src/cli/tests.rs",
+            "name": "mixed_extraction_requires_proven_feature_ownership_and_definitions"
+          },
+          "rationale": "Checks mixed extraction with unresolved feature ownership, required inputs, and a Ruby dependency gap confined to its source suite.",
+          "behaviorClass": "ruby-behavior"
+        },
+        {
+          "name": "mixed_reference_ignores_unselected_domains",
+          "requiredStatus": "engine-invariant",
+          "stage": "api-shape",
+          "rationale": "Shared mixed baseline orchestration ignores scopes without a discovered domain and still validates sources in the selected domain.",
+          "behaviorClass": "shared-engine-invariant"
+        },
         {
           "name": "retained_output_unused_limit_respects_feature_input_and_reports_incompleteness",
           "requiredStatus": "rust-evidence",
@@ -7433,6 +7464,66 @@
             "name": "ruby_baseline_reads_project_load_paths_from_the_reference"
           },
           "rationale": "Compares relative and absolute load paths against Git history, including changed symlink targets, and checks whether a changed Ruby provider creates a new duplicate handler.",
+          "behaviorClass": "ruby-behavior"
+        },
+        {
+          "name": "mixed_baseline_rejects_missing_configured_suite_evidence",
+          "requiredStatus": "rust-evidence",
+          "evidenceTest": {
+            "file": "tests/cli.rs",
+            "name": "mixed_baseline_rejects_missing_configured_suite_evidence"
+          },
+          "rationale": "A usable conventional Ruby reference cannot hide missing Cucumber.js source or feature evidence.",
+          "behaviorClass": "ruby-behavior"
+        },
+        {
+          "name": "mixed_baselines_do_not_transfer_allowances_between_suites",
+          "requiredStatus": "rust-evidence",
+          "evidenceTest": {
+            "file": "tests/cli.rs",
+            "name": "mixed_baselines_do_not_transfer_allowances_between_suites"
+          },
+          "rationale": "Saved and Git reference baselines preserve same-domain allowances when identical step text becomes unused in the other suite.",
+          "behaviorClass": "ruby-behavior"
+        },
+        {
+          "name": "mixed_current_run_reports_a_suite_without_features",
+          "requiredStatus": "rust-evidence",
+          "evidenceTest": {
+            "file": "tests/cli.rs",
+            "name": "mixed_current_run_reports_a_suite_without_features"
+          },
+          "rationale": "A complete Ruby scope retains findings while an empty configured feature scope marks the run incomplete and prevents a partial baseline update.",
+          "behaviorClass": "ruby-behavior"
+        },
+        {
+          "name": "mixed_default_discovery_preserves_suite_local_feature_usage",
+          "requiredStatus": "rust-evidence",
+          "evidenceTest": {
+            "file": "tests/cli.rs",
+            "name": "mixed_default_discovery_preserves_suite_local_feature_usage"
+          },
+          "rationale": "Automatic Ruby and Cucumber.js discovery preserves independent usage and reports unproved or shared feature ownership.",
+          "behaviorClass": "ruby-behavior"
+        },
+        {
+          "name": "mixed_pair_exports_share_the_full_record_allowance",
+          "requiredStatus": "rust-evidence",
+          "evidenceTest": {
+            "file": "tests/cli.rs",
+            "name": "mixed_pair_exports_share_the_full_record_allowance"
+          },
+          "rationale": "Mixed Ruby and JavaScript artifacts accept uneven scope sizes and reject overflow of the combined record allowance.",
+          "behaviorClass": "ruby-behavior"
+        },
+        {
+          "name": "mixed_suites_preserve_pairs_and_git_baseline_outcomes",
+          "requiredStatus": "rust-evidence",
+          "evidenceTest": {
+            "file": "tests/cli.rs",
+            "name": "mixed_suites_preserve_pairs_and_git_baseline_outcomes"
+          },
+          "rationale": "Mixed Ruby and JavaScript comparisons preserve pair identities, artifact ordering, and historical matching.",
           "behaviorClass": "ruby-behavior"
         },
         {

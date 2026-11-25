@@ -1,7 +1,7 @@
 //! Per-pair verification evidence written by `--emit-pairs` for test oracles.
 
 use super::evidence::definition_semantic_fingerprint;
-use super::fingerprints::relative_path;
+use super::fingerprints::{definition_position, relative_path};
 use super::pairs::PairRelationships;
 use crate::model::{Rule, StepDefinition};
 use crate::resource_limits::{LimitedWriter, MAX_ORACLE_OUTPUT_BYTES, MAX_ORACLE_RECORDS};
@@ -32,6 +32,7 @@ pub(crate) struct PairRecord {
 pub(crate) struct PairRecords {
     records: Vec<PairRecord>,
     limit: usize,
+    definition_offset: usize,
     omitted: bool,
 }
 
@@ -43,11 +44,17 @@ impl Default for PairRecords {
 }
 
 impl PairRecords {
+    /// Maps the next scope's local indices into the combined definition list.
+    pub(crate) fn set_definition_offset(&mut self, offset: usize) {
+        self.definition_offset = offset;
+    }
+
     /// Starts an empty collection with the supplied limit.
     pub(super) fn with_limit(limit: usize) -> Self {
         Self {
             records: Vec::new(),
             limit,
+            definition_offset: 0,
             omitted: false,
         }
     }
@@ -57,7 +64,10 @@ impl PairRecords {
         if self.records.len() == self.limit {
             self.omitted = true;
         } else {
-            self.records.push(record());
+            let mut record = record();
+            record.left += self.definition_offset;
+            record.right += self.definition_offset;
+            self.records.push(record);
         }
     }
 }
@@ -100,8 +110,8 @@ fn side(definition: &StepDefinition, root: &Path) -> Side {
     }
 }
 
-/// Writes one compact JSON line per evaluated pair, in verification order. Each definition is
-/// named once, however many pairs it takes part in.
+/// Writes one compact JSON line per evaluated pair, ordered by both definitions' positions.
+/// Reuses a serialized side's metadata wherever the same definition takes part in another pair.
 pub(crate) fn write_pairs(
     definitions: &[StepDefinition],
     records: &PairRecords,
@@ -126,8 +136,17 @@ pub(super) fn write_pairs_with_limit(
         inner: out,
         remaining: max_bytes,
     };
+    let mut ordered: Vec<_> = records.records.iter().collect();
+    ordered.sort_by_key(|record| {
+        (
+            definition_position(&definitions[record.left]),
+            record.left,
+            definition_position(&definitions[record.right]),
+            record.right,
+        )
+    });
     let mut sides: HashMap<usize, Side> = HashMap::new();
-    for record in &records.records {
+    for record in ordered {
         for index in [record.left, record.right] {
             sides
                 .entry(index)

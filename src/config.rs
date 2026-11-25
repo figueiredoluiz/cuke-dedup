@@ -290,6 +290,19 @@ pub struct Config {
     output_from_project_config: bool,
     #[serde(skip)]
     explicit_config_file: bool,
+    #[serde(skip)]
+    pub(crate) mixed_feature_selection: MixedFeatureSelection,
+    #[serde(skip)]
+    pub(crate) mixed_analysis: bool,
+}
+
+/// Whether automatic analysis can assign a feature to a configured framework.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub(crate) enum MixedFeatureSelection {
+    #[default]
+    Disabled,
+    Unproven,
+    Framework,
 }
 
 impl Config {
@@ -330,7 +343,13 @@ impl Config {
         overrides: ConfigOverrides,
         adapters: AdapterRegistry,
     ) -> Result<Self> {
-        Self::load_internal(root, overrides, CliConfigOverrides::default(), adapters)
+        Self::load_internal(
+            root,
+            overrides,
+            CliConfigOverrides::default(),
+            adapters,
+            false,
+        )
     }
 
     /// Like [`Config::load`], also applying CLI-only overrides after `overrides` and before
@@ -340,7 +359,13 @@ impl Config {
         overrides: ConfigOverrides,
         cli_overrides: CliConfigOverrides,
     ) -> Result<Self> {
-        Self::load_internal(root, overrides, cli_overrides, AdapterRegistry::default())
+        Self::load_internal(
+            root,
+            overrides,
+            cli_overrides,
+            AdapterRegistry::default(),
+            true,
+        )
     }
 
     /// Loads the configuration for `root` with the given overrides, resolving `root` to its
@@ -350,6 +375,7 @@ impl Config {
         overrides: ConfigOverrides,
         cli_overrides: CliConfigOverrides,
         adapters: AdapterRegistry,
+        enable_mixed: bool,
     ) -> Result<Self> {
         let root = canonical_platform_path(root)
             .with_context(|| format!("cannot access target directory {}", root.display()))?;
@@ -410,9 +436,15 @@ impl Config {
         config.explicit_config_file = explicit_config_file;
         config.config_warnings = config_warnings;
         if !has_explicit_features {
+            if enable_mixed {
+                config.mixed_feature_selection = MixedFeatureSelection::Unproven;
+            }
             match framework_registry::detect(&config.adapters, &config.root, package_json.as_ref())
             {
                 Ok(Some(framework)) => {
+                    if enable_mixed && framework.proves_ownership {
+                        config.mixed_feature_selection = MixedFeatureSelection::Framework;
+                    }
                     config.features = framework.patterns;
                     config.feature_pattern_origin = format!(
                         "{} configuration {}",
@@ -530,6 +562,8 @@ impl Config {
             custom_exclude: Vec::new(),
             output_from_project_config: false,
             explicit_config_file: false,
+            mixed_feature_selection: MixedFeatureSelection::Disabled,
+            mixed_analysis: false,
         }
     }
 
@@ -756,6 +790,24 @@ impl Config {
             );
         }
         Ok(())
+    }
+
+    /// Divides cumulative analysis allowances across the two mixed scopes.
+    pub(crate) fn analysis_allowance(&self, limit: usize) -> usize {
+        if self.mixed_analysis {
+            limit / 2
+        } else {
+            limit
+        }
+    }
+
+    /// The corresponding share for counters that use 64-bit work units.
+    pub(crate) fn analysis_work_allowance(&self, limit: u64) -> u64 {
+        if self.mixed_analysis {
+            limit / 2
+        } else {
+            limit
+        }
     }
 
     /// Returns the configured severity for `rule`, defaulting to [`Severity::Off`].

@@ -121,19 +121,21 @@ fn structured_config_values_distinguish_missing_dynamic_and_strings() {
         LiteralProperty::Dynamic
     );
     assert_eq!(
-        cucumber_json_paths(r#"{"paths":"root.feature"}"#).unwrap(),
+        cucumber_json_paths(r#"{"paths":"root.feature"}"#)
+            .unwrap()
+            .0,
         LiteralProperty::Strings(vec!["root.feature".to_owned()])
     );
     assert_eq!(
-        cucumber_yaml_paths("paths: dynamic").unwrap(),
+        cucumber_yaml_paths("paths: dynamic").unwrap().0,
         LiteralProperty::Strings(vec!["dynamic".to_owned()])
     );
     assert_eq!(
-        cucumber_yaml_paths("paths: [one, 2]").unwrap(),
+        cucumber_yaml_paths("paths: [one, 2]").unwrap().0,
         LiteralProperty::Dynamic
     );
     assert_eq!(
-        cucumber_yaml_paths("default: {}").unwrap(),
+        cucumber_yaml_paths("default: {}").unwrap().0,
         LiteralProperty::Missing
     );
 }

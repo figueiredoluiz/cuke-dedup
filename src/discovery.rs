@@ -17,7 +17,9 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 
 mod ignore_rules;
+mod mixed;
 use ignore_rules::IgnoreRules;
+pub(crate) use mixed::{FeatureOwner, MixedSuite};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 /// A discovered feature file together with its parser and matching config pattern.
@@ -29,6 +31,7 @@ pub struct FeatureFile {
     pub format: FeatureFormat,
     /// Effective glob pattern that selected this file.
     pub pattern: String,
+    pub(crate) owner: FeatureOwner,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -53,6 +56,7 @@ pub struct DiscoveredFiles {
     pub unmatched_feature_patterns: Vec<String>,
     /// Configured definition patterns that matched no files.
     pub unmatched_definition_patterns: Vec<String>,
+    pub(crate) mixed_suite: Option<MixedSuite>,
 }
 
 /// Discovers configured feature and definition files while respecting ignore rules, within a
@@ -169,6 +173,7 @@ pub(crate) fn discover_within(
     };
     let excludes = ExcludeSet(compile_globs(&config.exclude, "exclude")?);
     let mut files = DiscoveredFiles::default();
+    let mut conventional = mixed::ConventionalCandidate::new(config);
     let mut errors = DiagnosticDetails::default();
 
     let root = config.root.clone();
@@ -225,6 +230,12 @@ pub(crate) fn discover_within(
         };
         match entry.file_type() {
             Some(file_type) if file_type.is_file() => {}
+            Some(file_type) if file_type.is_dir() && entry.depth() == 1 => {
+                if let Some(candidate) = &mut conventional {
+                    candidate.observe_directory(entry.path());
+                }
+                continue;
+            }
             _ => continue,
         }
         let relative = entry
@@ -250,8 +261,15 @@ pub(crate) fn discover_within(
                 format,
                 path: entry.into_path(),
                 pattern: pattern.clone(),
+                owner: FeatureOwner::Framework,
             });
             continue;
+        }
+
+        if let Some(candidate) = &mut conventional {
+            if candidate.observe_feature(entry.path()) {
+                continue;
+            }
         }
 
         if let Some(adapter) = config.adapters().adapter_for_path(relative) {
@@ -299,16 +317,21 @@ pub(crate) fn discover_within(
     // A refusal recorded at an entry the excludes then dropped surfaces here.
     rules.check()?;
 
-    files
-        .features
-        .sort_by(|left, right| left.path.cmp(&right.path));
     files.unmatched_feature_patterns = unmatched_patterns(
         budget,
         &feature_globs,
         &config.root,
         files.features.iter().map(|file| &file.path),
     )?;
-    select_conventional_suite(config, budget, &mut files)?;
+    if let Some(candidate) = conventional {
+        candidate.select(config, budget, &mut files)?;
+    }
+    if files.mixed_suite.is_none() {
+        select_conventional_suite(config, budget, &mut files)?;
+    }
+    files
+        .features
+        .sort_by(|left, right| left.path.cmp(&right.path));
     files
         .definitions
         .sort_by(|left, right| left.path.cmp(&right.path));

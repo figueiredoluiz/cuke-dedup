@@ -767,7 +767,7 @@ fn retained_output_baseline_is_replaced_only_at_or_under_the_write_ceiling() {
         }
         let mut offered = [finding(root.path(), "steps/current.ts")];
         let error =
-            update_baseline_with_limit(&mut offered, &path, expected.len() - 1).unwrap_err();
+            update_baseline_with_limit(&mut offered, &path, expected.len() - 1, None).unwrap_err();
         assert!(format!("{error:#}").contains("byte limit exceeded"));
         assert!(offered[0].is_active());
         if existing {
@@ -780,7 +780,8 @@ fn retained_output_baseline_is_replaced_only_at_or_under_the_write_ceiling() {
             usize::from(existing)
         );
 
-        let outcome = update_baseline_with_limit(&mut offered, &path, expected.len()).unwrap();
+        let outcome =
+            update_baseline_with_limit(&mut offered, &path, expected.len(), None).unwrap();
         assert_eq!(fs::read(&path).unwrap(), expected);
         assert_eq!(outcome.suppressed, 1);
     }

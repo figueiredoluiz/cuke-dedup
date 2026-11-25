@@ -8,7 +8,7 @@ resource limits keep failures visible and bound the work performed.
 
 - The minimum supported Rust version is 1.100.
 - Node.js 24 LTS is recommended for the npm launcher. CI also tests Node.js 20 as the minimum compatible version; Node.js 20 has reached end of life upstream.
-- Source adapters cover JavaScript and TypeScript, including JSX and common module variants. Experimental [Cucumber-Ruby](discovery/cucumber-ruby.md) discovers standalone conventional suites by default and supports explicit selection for other layouts. Its supported subset and completion gaps remain separate from JS/TS support.
+- Source adapters cover JavaScript and TypeScript, including JSX and common module variants. Experimental [Cucumber-Ruby](discovery/cucumber-ruby.md) discovers conventional suites by default, including alongside JS/TS when feature ownership is clear, and supports explicit selection for other layouts. Its supported subset and completion gaps remain separate from JS/TS support.
 - Unsupported source languages are rejected rather than guessed.
 - Classic Gherkin and Gherkin Markdown are supported, including declared Gherkin dialects.
 - Before version 1.0, configuration and machine-report schemas may evolve between minor releases.

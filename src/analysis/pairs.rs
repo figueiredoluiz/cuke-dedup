@@ -183,9 +183,14 @@ pub(super) fn analyze_definition_pairs(
         .collect::<Vec<_>>();
     let classes = &generated.comparison_classes;
     let behavior_events = &generated.behavior_events;
-    let mut forests = FindingForests::new(definitions.len());
-    let mut similarity_work = 0_u64;
+    let mut forests = FindingForests::new(
+        definitions.len(),
+        config.analysis_allowance(MAX_FINDING_EVIDENCE_BYTES),
+    );
+    let mut similarity_work = MAX_TOTAL_PAIR_SIMILARITY_WORK
+        - config.analysis_work_allowance(MAX_TOTAL_PAIR_SIMILARITY_WORK);
     let mut suppression_work = 0_u64;
+    let suppression_limit = config.analysis_work_allowance(MAX_TOTAL_PAIR_SUPPRESSION_WORK);
     let mut evaluated = 0_usize;
     for candidate in generated.candidates.values() {
         let left_index = candidate.left;
@@ -342,7 +347,7 @@ pub(super) fn analyze_definition_pairs(
             || !charge_work(
                 &mut suppression_work,
                 candidate_suppression_work,
-                MAX_TOTAL_PAIR_SUPPRESSION_WORK,
+                suppression_limit,
             )
         {
             break;
@@ -818,7 +823,8 @@ pub(super) fn definition_pair_candidates(
         }
     }
 
-    let mut builder = CandidateBuilder::new(config.max_candidate_comparisons);
+    let mut builder =
+        CandidateBuilder::new(config.analysis_allowance(config.max_candidate_comparisons));
     for group in sorted_groups(normalized_matchers) {
         let mut exact_groups: HashMap<(&str, &str), Vec<usize>> = HashMap::new();
         for index in group {
@@ -971,6 +977,7 @@ pub(super) fn definition_pair_candidates(
         &behavior_events,
         &behavior_anchor_events,
         &mut builder,
+        config.mixed_analysis,
     );
     let census = builder.census(truncated_structural_classes.len());
     CandidateGeneration {
@@ -1036,7 +1043,9 @@ fn insert_matcher_blocking_candidates(
     behavior_events: &[Vec<usize>],
     behavior_anchor_events: &[Vec<usize>],
     builder: &mut CandidateBuilder,
+    mixed_analysis: bool,
 ) {
+    let scopes = if mixed_analysis { 2 } else { 1 };
     let mut shingle_count = 0_usize;
     let mut shingles = Vec::with_capacity(definitions.len());
     for definition in definitions {
@@ -1052,7 +1061,7 @@ fn insert_matcher_blocking_candidates(
             builder.skip(CandidateSource::MatcherBlocking, 1);
             return;
         };
-        if next_count > MAX_MATCHER_SHINGLES_TOTAL {
+        if next_count > MAX_MATCHER_SHINGLES_TOTAL / scopes {
             builder.skip(CandidateSource::MatcherBlocking, 1);
             return;
         }
@@ -1083,8 +1092,10 @@ fn insert_matcher_blocking_candidates(
 
     let mut ordered_postings = postings.into_iter().collect::<Vec<_>>();
     ordered_postings.sort_by_key(|(key, _)| *key);
-    let mut proposal_work = 0_u64;
-    let mut event_work = 0_u64;
+    let mut proposal_work =
+        MAX_MATCHER_BLOCKING_PROPOSAL_WORK - MAX_MATCHER_BLOCKING_PROPOSAL_WORK / scopes as u64;
+    let mut event_work =
+        MAX_MATCHER_BLOCKING_EVENT_WORK - MAX_MATCHER_BLOCKING_EVENT_WORK / scopes as u64;
     let mut considered_pairs = HashSet::new();
     let mut saturated_postings = Vec::new();
     for (_, posting) in &ordered_postings {
@@ -1628,11 +1639,11 @@ struct FindingForests {
 
 impl FindingForests {
     /// Empty forest set; a forest is created per rule and suppression state on first use.
-    fn new(definition_count: usize) -> Self {
+    fn new(definition_count: usize, evidence_remaining: usize) -> Self {
         Self {
             definition_count,
             forests: HashMap::new(),
-            evidence_remaining: MAX_FINDING_EVIDENCE_BYTES,
+            evidence_remaining,
             evidence_exhausted: false,
         }
     }
