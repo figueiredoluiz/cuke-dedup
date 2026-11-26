@@ -432,6 +432,29 @@ fn git_comparison_metadata_copy_enforces_file_and_size_limits() {
     assert!(!output.exists());
     fs::write(&input, "*.tmp\n").unwrap();
     copy_git_info(&input, &output).unwrap();
+
+    let unexpected = root.join("unexpected");
+    fs::write(&unexpected, "# another regular file\n").unwrap();
+    let error = copy_bounded_git_metadata(
+        Some(&input),
+        &output,
+        File::open(&unexpected).unwrap(),
+        "Git comparison metadata",
+    )
+    .unwrap_err();
+    assert!(error.to_string().contains("regular file of at most 1 MiB"));
+    assert_eq!(fs::read(&output).unwrap(), b"*.tmp\n");
+
+    assert!(open_operator_git_input(&root.join("absent"))
+        .unwrap()
+        .is_none());
+    let error = open_operator_git_input(root).unwrap_err();
+    assert!(error.to_string().contains("regular file of at most 1 MiB"));
+    let error = open_operator_git_input(&root.join("invalid\0path")).unwrap_err();
+    assert_eq!(
+        error.downcast_ref::<std::io::Error>().unwrap().kind(),
+        std::io::ErrorKind::InvalidInput
+    );
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
@@ -608,7 +631,7 @@ fn changed_files_bound_worktree_settings() {
     let config_path = root.join(".git/config");
     let original = fs::read_to_string(&config_path).unwrap();
     fs::write(&config_path, format!("{original}\n[core]\neol = lf\n")).unwrap();
-    let settings = worktree_settings(executable.as_os_str(), root, scratch.path()).unwrap();
+    let settings = worktree_settings(executable.as_os_str(), root, None, scratch.path()).unwrap();
     assert!(settings.contains(&OsString::from("core.eol=lf")));
     assert_eq!(
         git_changed_files(root, "HEAD").unwrap(),
@@ -617,7 +640,7 @@ fn changed_files_bound_worktree_settings() {
 
     let repeated = "eol = lf\n".repeat(24_000);
     fs::write(&config_path, format!("{original}\n[core]\n{repeated}")).unwrap();
-    let Err(error) = worktree_settings(executable.as_os_str(), root, scratch.path()) else {
+    let Err(error) = worktree_settings(executable.as_os_str(), root, None, scratch.path()) else {
         panic!("oversized worktree settings were accepted");
     };
     assert!(
@@ -650,7 +673,8 @@ esac
 "#;
         fs::write(&program, script).unwrap();
         fs::set_permissions(&program, fs::Permissions::from_mode(0o700)).unwrap();
-        let settings = worktree_settings(program.as_os_str(), &repository, scratch.path()).unwrap();
+        let settings =
+            worktree_settings(program.as_os_str(), &repository, None, scratch.path()).unwrap();
         let snapshot = scratch.path().join("core.excludesfile");
         assert_eq!(
             settings,
@@ -684,8 +708,8 @@ esac
         for (script, expected) in cases {
             fs::write(&program, format!("#!/bin/sh\n{script}\n")).unwrap();
             fs::set_permissions(&program, fs::Permissions::from_mode(0o700)).unwrap();
-            let error =
-                worktree_settings(program.as_os_str(), &repository, scratch.path()).unwrap_err();
+            let error = worktree_settings(program.as_os_str(), &repository, None, scratch.path())
+                .unwrap_err();
             assert!(error.to_string().contains(expected), "{error:#}");
         }
     }
@@ -810,11 +834,13 @@ fn changed_files_validate_configured_git_input_files() {
 
         let literal = ":(optional)comparison-literal";
         fs::write(root.join(literal), "ignored.ts\n").unwrap();
-        set("core.excludesfile", &format!(":(optional){literal}"));
-        assert_eq!(
-            git_changed_files(&scope, "HEAD").unwrap(),
-            BTreeSet::from([visible])
-        );
+        for path in [format!(":(optional){literal}"), format!("./{literal}")] {
+            set("core.excludesfile", &path);
+            assert_eq!(
+                git_changed_files(&scope, "HEAD").unwrap(),
+                BTreeSet::from([visible.clone()])
+            );
+        }
 
         let inaccessible = root.join("comparison-inaccessible");
         fs::write(&inaccessible, "# normal settings\n").unwrap();
@@ -875,7 +901,8 @@ fn changed_files_confine_repository_owned_git_inputs() {
         let contained = root.join("repository-settings");
         for path in ["repository-settings", contained.to_str().unwrap()] {
             set(scope, key, path);
-            let files = git_changed_files(&root, "HEAD").unwrap();
+            let files = git_changed_files(&root, "HEAD")
+                .unwrap_or_else(|error| panic!("{key} at {path:?}: {error:#}"));
             assert!(files.iter().any(|file| file.ends_with("visible.ts")));
         }
 
@@ -904,6 +931,22 @@ fn changed_files_confine_repository_owned_git_inputs() {
             set(scope, key, alias.to_str().unwrap());
             let error = git_changed_files(&root, "HEAD").unwrap_err();
             assert!(format!("{error:#}").contains("outside the checkout"));
+
+            let inside = root.join("settings");
+            fs::create_dir_all(&inside).unwrap();
+            fs::write(inside.join("rules"), "selected.ts\n").unwrap();
+            let selected = root.join("selected.ts");
+            fs::write(&selected, "ordinary work\n").unwrap();
+            let file_alias = root.join(format!("{key}-file"));
+            let dir_alias = root.join(format!("{key}-directory"));
+            std::os::unix::fs::symlink("settings/rules", &file_alias).unwrap();
+            std::os::unix::fs::symlink(&inside, &dir_alias).unwrap();
+            for path in [file_alias, dir_alias.join("rules")] {
+                set(scope, key, path.to_str().unwrap());
+                let files = git_changed_files(&root, "HEAD").unwrap();
+                assert!(files.contains(&root.join("visible.ts")));
+                assert_eq!(files.contains(&selected), key == "core.attributesfile");
+            }
         }
 
         set(scope, key, "repository-settings");
@@ -911,15 +954,43 @@ fn changed_files_confine_repository_owned_git_inputs() {
 
     #[cfg(unix)]
     {
-        let key = "core.excludesfile";
-        let invalid_parent = root.join("repository-settings").join("child");
-        let error = verify_repository_git_path(&root, &invalid_parent, key).unwrap_err();
-        assert!(error.to_string().contains("cannot verify Git setting"));
+        let canonical = canonical_platform_path(&root).unwrap();
+        let invalid_parent = canonical.join("repository-settings").join("child");
+        let error =
+            git_input::open_repository_input(&canonical, None, &invalid_parent).unwrap_err();
+        assert_eq!(
+            error.downcast_ref::<std::io::Error>().unwrap().kind(),
+            std::io::ErrorKind::NotADirectory
+        );
+        let error = git_input::open_repository_input(&canonical, None, Path::new("")).unwrap_err();
+        assert!(error.to_string().contains("outside the checkout"));
+    }
+}
 
-        let error = verify_repository_git_path(&root, Path::new(""), key).unwrap_err();
-        assert!(error
-            .to_string()
-            .contains("cannot verify the path for Git setting"));
+/// Checks ordinary contained link components and bounded link traversal.
+#[cfg(unix)]
+#[test]
+fn changed_files_resolve_repository_link_components() {
+    let directory = tempfile::tempdir().unwrap();
+    let root = canonical_platform_path(directory.path()).unwrap();
+    fs::create_dir(root.join("config")).unwrap();
+    fs::write(root.join("rules"), "*.tmp\n").unwrap();
+    for (link, target) in [
+        ("relative", "./config/../rules"),
+        ("directory", "config/"),
+        ("loop", "loop"),
+    ] {
+        std::os::unix::fs::symlink(target, root.join(link)).unwrap();
+    }
+
+    let open = |name| git_input::open_repository_input(&root, None, &root.join(name));
+    let mut input = open("relative").unwrap().unwrap();
+    let mut rules = String::new();
+    input.read_to_string(&mut rules).unwrap();
+    assert_eq!(rules, "*.tmp\n");
+    for (name, expected) in [("directory", "regular file"), ("loop", "too many links")] {
+        let error = open(name).unwrap_err();
+        assert!(error.to_string().contains(expected), "{name}: {error}");
     }
 }
 
@@ -955,6 +1026,68 @@ fn changed_files_configured_input_requires_a_windows_filesystem_path() {
             "{path}"
         );
     }
+}
+
+/// Checks matching Windows checkout prefixes without consulting any path on disk.
+#[cfg(windows)]
+#[test]
+fn changed_files_git_inputs_admit_only_the_selected_windows_checkout() {
+    for (root, source, admitted) in [
+        (r"C:\fixture", r"C:\fixture\rules", true),
+        (r"C:\fixture", r"C:\FIXTUR~1\rules", true),
+        (r"C:\fixture", r"\\?\C:\fixture\rules", true),
+        (r"C:\fixture", r"C:\fixture-other\rules", false),
+        (r"C:\fixture", r"\\fixture.invalid\files\rules", false),
+        (
+            r"\\fixture.invalid\files\checkout",
+            r"\\?\UNC\fixture.invalid\files\checkout\rules",
+            true,
+        ),
+        (
+            r"\\fixture.invalid\files\checkout",
+            r"\\fixture.invalid\other\checkout\rules",
+            false,
+        ),
+    ] {
+        let resolved = git_input::checkout_relative(
+            Path::new(root),
+            Some(Path::new(r"C:\FIXTUR~1")),
+            Path::new(source),
+        );
+        if admitted {
+            assert_eq!(resolved.unwrap(), Path::new("rules"));
+        } else {
+            assert!(resolved
+                .unwrap_err()
+                .to_string()
+                .contains("outside the checkout"));
+        }
+    }
+}
+
+/// Checks the Windows reader can select a regular file through a contained junction.
+#[cfg(windows)]
+#[test]
+fn changed_files_read_through_a_contained_windows_junction() {
+    let directory = tempfile::tempdir().unwrap();
+    let root = canonical_platform_path(directory.path()).unwrap();
+    let config = root.join("config");
+    fs::create_dir(&config).unwrap();
+    fs::write(config.join("rules"), "*.tmp\n").unwrap();
+    let result = std::process::Command::new("cmd.exe")
+        .current_dir(&root)
+        .args(["/D", "/C", "mklink", "/J", "alias"])
+        .arg(&config)
+        .output()
+        .unwrap();
+    assert!(result.status.success(), "{:?}", result.stderr);
+
+    let alias = root.join("alias");
+    let opened = git_input::open_repository_input(&root, None, &alias.join("rules"));
+    fs::remove_dir(alias).unwrap();
+    let mut rules = String::new();
+    opened.unwrap().unwrap().read_to_string(&mut rules).unwrap();
+    assert_eq!(rules, "*.tmp\n");
 }
 
 /// Checks the private Git command retains the checkout's long-path setting.

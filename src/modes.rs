@@ -14,6 +14,8 @@ use std::io::{BufRead, BufReader, Read, Write};
 use std::path::{Path, PathBuf};
 use std::process::{ChildStdout, Command, ExitStatus, Stdio};
 
+mod git_input;
+
 // Snapshotting is additional disk work, separate from the analyzer's per-source read limits.
 const MAX_BASELINE_CHECKOUT_BYTES: u64 = 512 * 1024 * 1024;
 
@@ -166,8 +168,8 @@ struct ChangedGit {
 
 impl ChangedGit {
     /// Prepares a Git view with only the checkout settings needed to compare worktree paths.
-    fn new(root: &Path) -> Result<Self> {
-        let root = &canonical_platform_path(root)?;
+    fn new(requested_root: &Path) -> Result<Self> {
+        let root = &canonical_platform_path(requested_root)?;
         let scratch = tempfile::tempdir().context("cannot prepare changed-file comparison")?;
         let executable = git_executable(root)?;
         let metadata = || checkout_metadata_git(executable.as_os_str(), root, scratch.path());
@@ -225,7 +227,16 @@ impl ChangedGit {
             &objects,
             oid.len(),
         )?;
-        let settings = worktree_settings(executable.as_os_str(), &repository, scratch.path())?;
+        #[cfg(windows)]
+        let alias = git_input::trusted_checkout_alias(requested_root, root, &repository);
+        #[cfg(not(windows))]
+        let alias: Option<PathBuf> = None;
+        let settings = worktree_settings(
+            executable.as_os_str(),
+            &repository,
+            alias.as_deref(),
+            scratch.path(),
+        )?;
         Ok(Self {
             scratch,
             executable,
@@ -371,6 +382,7 @@ const GIT_FILE_SETTINGS: [&str; 2] = ["core.excludesfile", "core.attributesfile"
 fn worktree_settings(
     executable: &OsStr,
     repository: &Path,
+    alias: Option<&Path>,
     scratch: &Path,
 ) -> Result<Vec<OsString>> {
     const INVALID: &str = "invalid Git worktree settings";
@@ -407,7 +419,14 @@ fn worktree_settings(
         }
         settings.push(path_from_git_bytes(&setting)?.into_os_string());
     }
-    snapshot_configured_git_inputs(executable, repository, scratch, entries, &mut settings)?;
+    snapshot_configured_git_inputs(
+        executable,
+        repository,
+        alias,
+        scratch,
+        entries,
+        &mut settings,
+    )?;
     Ok(settings)
 }
 
@@ -436,6 +455,7 @@ fn read_worktree_configuration(git: &mut Command, failure: &str) -> Result<Optio
 fn snapshot_configured_git_inputs(
     executable: &OsStr,
     repository: &Path,
+    alias: Option<&Path>,
     scratch: &Path,
     entries: &[[&[u8]; 2]],
     settings: &mut Vec<OsString>,
@@ -466,30 +486,18 @@ fn snapshot_configured_git_inputs(
             continue;
         }
         let source = configured_git_input_source(repository, &path)?;
-        if repository_owned {
-            verify_repository_git_path(repository, &source, key)?;
-        }
         let kind = format!("Git setting {key}");
-        match source.metadata() {
-            Ok(metadata) if metadata.is_file() => {
-                let opened = crate::contained_read::open_nonblocking(&source)
-                    .with_context(|| format!("failed to open {kind}"))?;
-                if repository_owned {
-                    crate::contained_read::Contained::new(
-                        repository,
-                        "select a file inside the checkout",
-                    )
-                    .verify(&source, key, &opened)?;
-                }
-                copy_bounded_git_metadata(&source, &destination, opened, &kind)?;
-            }
-            Ok(_) => bail!("{kind} must select a regular file of at most 1 MiB"),
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
-                if optional {
-                    continue; // An absent optional value leaves Git's implicit default active.
-                }
-            }
-            Err(error) => return Err(error).context(kind),
+        let opened = if repository_owned {
+            git_input::open_repository_input(repository, alias, &source)
+        } else {
+            open_operator_git_input(&source)
+        }
+        .with_context(|| format!("failed to open {kind}"))?;
+        if let Some(opened) = opened {
+            let unanchored = (!repository_owned).then_some(source.as_path());
+            copy_bounded_git_metadata(unanchored, &destination, opened, &kind)?;
+        } else if optional {
+            continue; // An absent optional value leaves Git's implicit default active.
         }
         settings.push(git_path_setting(key, &destination));
     }
@@ -524,23 +532,16 @@ fn expand_captured_git_path(
     path_from_git_bytes(path)
 }
 
-/// Checks an existing target or the closest existing parent of a missing configured path.
-fn verify_repository_git_path(repository: &Path, source: &Path, key: &str) -> Result<()> {
-    for candidate in source.ancestors() {
-        match canonical_platform_path(candidate) {
-            Ok(canonical) => {
-                if !canonical.starts_with(repository) {
-                    bail!("Git setting {key} selects a path outside the checkout");
-                }
-                return Ok(());
-            }
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => continue,
-            Err(error) => {
-                return Err(error).with_context(|| format!("cannot verify Git setting {key}"))
-            }
+/// Opens a regular file selected by Git's system or operator configuration.
+fn open_operator_git_input(source: &Path) -> Result<Option<File>> {
+    match source.metadata() {
+        Ok(metadata) if metadata.is_file() => {
+            Ok(Some(crate::contained_read::open_nonblocking(source)?))
         }
+        Ok(_) => bail!("must select a regular file of at most 1 MiB"),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(None),
+        Err(error) => Err(error.into()),
     }
-    bail!("cannot verify the path for Git setting {key}")
 }
 
 /// Recognizes explicit disabled Git file inputs without consulting a device.
@@ -647,7 +648,7 @@ fn copy_git_info(source: &Path, destination: &Path) -> Result<()> {
         .transpose()?;
     match input {
         Some(input) if source.symlink_metadata()?.is_file() => {
-            copy_bounded_git_metadata(source, destination, input, KIND)
+            copy_bounded_git_metadata(Some(source), destination, input, KIND)
         }
         _ => bail!("{KIND} must be a regular file of at most 1 MiB"),
     }
@@ -655,7 +656,7 @@ fn copy_git_info(source: &Path, destination: &Path) -> Result<()> {
 
 /// Copies a verified regular Git metadata handle with a byte limit independent of its size hint.
 fn copy_bounded_git_metadata(
-    source: &Path,
+    unanchored: Option<&Path>,
     destination: &Path,
     input: File,
     kind: &str,
@@ -663,11 +664,13 @@ fn copy_bounded_git_metadata(
     const LIMIT: u64 = 1024 * 1024;
     let opened = input.metadata()?;
     let refusal = format!("{kind} must be a regular file of at most 1 MiB");
-    if !opened.is_file()
-        || opened.len() > LIMIT
-        || !crate::contained_read::same_file_as(&input, source)?
-    {
+    if !opened.is_file() || opened.len() > LIMIT {
         bail!("{refusal}");
+    }
+    if let Some(source) = unanchored {
+        if !crate::contained_read::same_file_as(&input, source)? {
+            bail!("{refusal}");
+        }
     }
     let mut bytes = Vec::new();
     copy_git_bytes(input, &mut bytes, LIMIT, &refusal)?;
