@@ -2324,6 +2324,449 @@ fn resolves_named_handlers_to_bodies_without_cross_file_name_collisions() {
     );
 }
 
+/// Creates an extraction session with the budget used by the handler work regression matrix.
+fn handler_work_session(root: &Path, limit: usize) -> SourceExtractionSession {
+    let mut session = SourceExtractionSession::new(root);
+    session
+        .state::<TypeScriptExtractionSession>()
+        .unwrap()
+        .handler_work = WorkBudget::new(limit);
+    session
+}
+
+/// Checks exact admission, final comparisons, and sticky refusal across the JS and TS adapters.
+#[test]
+fn handler_fingerprint_work_preserves_matcher_findings_after_refusal() {
+    use crate::analysis::fingerprints::write_fingerprints;
+    use crate::analysis::pair_records::{write_pairs, PairRecords};
+    use crate::analysis::{analyze_for_cli, UNUSED_FINDING_LIMITS};
+
+    const BODY: &str = "function handler() { load(); publish(); }";
+    let source = format!(
+        "{BODY}\nGiven('account ready', handler);\nGiven('report published', handler);\nGiven('shared step', handler);\nThen('shared step', handler);"
+    );
+    let directory = tempfile::tempdir().unwrap();
+    let config = crate::config::Config::load(directory.path(), Default::default()).unwrap();
+    let source_file = file(TYPESCRIPT);
+    let later_file = SourceFile {
+        path: "other.js".into(),
+        language: JAVASCRIPT,
+    };
+
+    for (limit, comparable) in [(0, 0), (BODY.len() * 2 - 1, 1), (BODY.len() * 2, 2)] {
+        let mut session = handler_work_session(directory.path(), limit);
+        let first = TYPESCRIPT_ADAPTER
+            .extract_with_session(&source, &source_file, &mut session)
+            .unwrap();
+        assert_eq!(
+            first
+                .definitions
+                .iter()
+                .map(|definition| definition.matcher.as_str())
+                .collect::<Vec<_>>(),
+            [
+                "account ready",
+                "report published",
+                "shared step",
+                "shared step"
+            ],
+            "limit {limit}"
+        );
+        assert_eq!(
+            first
+                .definitions
+                .iter()
+                .filter(|definition| definition.handler.comparable)
+                .count(),
+            comparable,
+            "limit {limit}"
+        );
+        let [diagnostic] = first.diagnostics.as_slice() else {
+            panic!(
+                "expected one work limit diagnostic at {limit}: {:?}",
+                first.diagnostics
+            );
+        };
+        assert!(crate::source_adapter::is_completeness_diagnostic(
+            diagnostic
+        ));
+        assert!(diagnostic
+            .message
+            .contains("handler fingerprint work limit"));
+        assert_eq!(diagnostic.location.line, comparable + 2);
+
+        let later = JAVASCRIPT_ADAPTER
+            .extract_with_session(
+                "function h() {} Given('a later step', h);",
+                &later_file,
+                &mut session,
+            )
+            .unwrap();
+        assert_eq!(later.definitions[0].matcher, "a later step");
+        assert!(!later.definitions[0].handler.comparable, "limit {limit}");
+        assert!(later
+            .diagnostics
+            .iter()
+            .any(crate::source_adapter::is_completeness_diagnostic));
+
+        let step = crate::model::FeatureStep {
+            keyword: "Given".into(),
+            text: "shared step".into(),
+            location: SourceLocation::new("steps.feature", 3, 5, 3, 22),
+        };
+        let mut pairs = PairRecords::default();
+        let (outcome, _, _) = analyze_for_cli(
+            &Default::default(),
+            first
+                .definitions
+                .into_iter()
+                .chain(later.definitions)
+                .collect(),
+            vec![step],
+            &config,
+            Some(&mut pairs),
+            Some(UNUSED_FINDING_LIMITS),
+        )
+        .unwrap();
+        assert!(outcome.incomplete.is_empty());
+        let result = outcome.result;
+        let duplicate = result
+            .findings
+            .iter()
+            .find(|finding| finding.rule == Rule::DuplicateMatcher)
+            .expect("the matcher-only finding survives");
+        assert!(
+            duplicate.evidence.handler_similarity.is_none(),
+            "limit {limit}"
+        );
+        assert_eq!(
+            duplicate.evidence.handler_evidence,
+            "Handler fingerprint unavailable"
+        );
+        assert!(result
+            .findings
+            .iter()
+            .any(|finding| finding.rule == Rule::AmbiguousStep));
+        let handler_findings = result
+            .findings
+            .iter()
+            .filter(|finding| {
+                matches!(
+                    finding.rule,
+                    Rule::DuplicateHandler
+                        | Rule::NearDuplicateStep
+                        | Rule::ParameterizationCandidate
+                )
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(
+            handler_findings.len(),
+            usize::from(comparable == 2),
+            "limit {limit}"
+        );
+        if let [finding] = handler_findings.as_slice() {
+            assert_eq!(finding.rule, Rule::DuplicateHandler);
+            assert_eq!(finding.primary.line, 2);
+            assert_eq!(finding.related[0].line, 3);
+        }
+
+        let mut artifact = Vec::new();
+        write_pairs(&result.definitions, &pairs, directory.path(), &mut artifact).unwrap();
+        let rows = serde_json::Deserializer::from_slice(&artifact)
+            .into_iter::<serde_json::Value>()
+            .collect::<Result<Vec<_>, _>>()
+            .unwrap();
+        let first_with_rule = |rule: Rule| {
+            rows.iter().find(|row| {
+                row["rules"]
+                    .as_array()
+                    .unwrap()
+                    .iter()
+                    .any(|record_rule| record_rule == rule.as_str())
+            })
+        };
+        let pair = first_with_rule(Rule::DuplicateMatcher).unwrap();
+        let relationships = &pair["relationships"];
+        assert_eq!(relationships["exactMatcher"], true);
+        for axis in [
+            "sameHandler",
+            "sameHandlerStructure",
+            "sameStructure",
+            "sameDeferredAssertions",
+        ] {
+            assert_eq!(relationships[axis], false, "limit {limit}: {relationships}");
+        }
+        assert!(pair["handlerSimilarity"].is_null());
+
+        artifact.clear();
+        write_fingerprints(&result.definitions, directory.path(), &mut artifact).unwrap();
+        let fingerprints = serde_json::Deserializer::from_slice(&artifact)
+            .into_iter::<serde_json::Value>()
+            .collect::<Result<Vec<_>, _>>()
+            .unwrap();
+        assert_eq!(fingerprints.len(), result.definitions.len());
+        for (record, definition) in fingerprints.iter().zip(&result.definitions) {
+            let handler = record["handler"].as_object().unwrap();
+            if definition.handler.has_representation() {
+                assert!(!handler.contains_key("available"));
+            } else {
+                assert_eq!(handler["available"], false, "limit {limit}: {record}");
+                assert_eq!(handler["comparable"], false);
+            }
+        }
+        for side in [&pair["left"], &pair["right"]] {
+            let fingerprint = fingerprints
+                .iter()
+                .find(|record| record["path"] == side["path"] && record["line"] == side["line"])
+                .unwrap();
+            assert_eq!(
+                fingerprint["definitionFingerprint"],
+                side["definitionFingerprint"]
+            );
+            assert_eq!(fingerprint["handler"]["available"], false);
+        }
+        if comparable == 2 {
+            let pair = first_with_rule(Rule::DuplicateHandler).unwrap();
+            assert_eq!(pair["relationships"]["sameHandler"], true);
+            assert_eq!(pair["handlerSimilarity"], 1.0);
+        }
+    }
+}
+
+/// Checks that secondary behavior walks share the handler fingerprint allowance.
+#[test]
+fn handler_fingerprint_work_charges_repeated_analysis() {
+    const HELPER: &str = "function saveEntry() { writeRecord(); }";
+    let statements = format!("{HELPER} saveEntry(); saveEntry();");
+    let handler = format!("function updateReport() {{ {statements} }}");
+    let ordinary = format!("{handler}\nGiven('report updated', updateReport);");
+    let bound_handler = "function updateReport() { announce(); }";
+    let arguments = format!("(null, (() => {{ {statements} }})())");
+    let bound = format!("{bound_handler}\nGiven('report updated', updateReport.bind{arguments});");
+    let decorated = format!(
+        "import {{ Given }} from 'playwright-bdd/decorators';\nclass Steps {{ @Given('report updated') updateReport() {{ {statements} }} }}"
+    );
+
+    let nested_callee = "composeReport()";
+    let nested_handler = format!("function writeReport() {{ {nested_callee}(); }}");
+    let nested = format!("{nested_handler}\nGiven('report updated', writeReport);");
+    let member_callee = "reports.audit.save";
+    let member_handler = format!("function writeReport() {{ {member_callee}(); }}");
+    let member = format!("{member_handler}\nGiven('report updated', writeReport);");
+
+    // The method, class body and class declaration are the existing initial charge.
+    let mut parser = Parser::new();
+    parser.set_language(&grammar(TYPESCRIPT).unwrap()).unwrap();
+    let tree = parser.parse(&decorated, None).unwrap();
+    let class = tree.root_node().named_child(1).unwrap();
+    let class_body = class.child_by_field_name("body").unwrap();
+    let mut cursor = class_body.walk();
+    let method = class_body
+        .named_children(&mut cursor)
+        .find(|node| node.kind() == "method_definition")
+        .unwrap();
+    let decorated_charge: usize = [class, class_body, method]
+        .map(|node| node.byte_range().len())
+        .iter()
+        .sum();
+
+    let directory = tempfile::tempdir().unwrap();
+    let config = crate::config::Config::load(directory.path(), Default::default()).unwrap();
+    let helper_charge = HELPER.len() * 2;
+    for (case, adapter, language, suffix, source, charge) in [
+        (
+            "ordinary",
+            &JAVASCRIPT_ADAPTER,
+            JAVASCRIPT,
+            "js",
+            ordinary.as_str(),
+            handler.len() + helper_charge,
+        ),
+        (
+            "bound arguments",
+            &JAVASCRIPT_ADAPTER,
+            JAVASCRIPT,
+            "js",
+            bound.as_str(),
+            bound_handler.len() + arguments.len() + helper_charge,
+        ),
+        (
+            "decorated",
+            &TYPESCRIPT_ADAPTER,
+            TYPESCRIPT,
+            "ts",
+            decorated.as_str(),
+            decorated_charge + helper_charge,
+        ),
+        (
+            "nested callee",
+            &JAVASCRIPT_ADAPTER,
+            JAVASCRIPT,
+            "js",
+            nested.as_str(),
+            nested_handler.len() + nested_callee.len(),
+        ),
+        (
+            "static member callee",
+            &JAVASCRIPT_ADAPTER,
+            JAVASCRIPT,
+            "js",
+            member.as_str(),
+            member_handler.len() + member_callee.len(),
+        ),
+    ] {
+        for (limit, both_fit) in [(charge * 2, true), (charge * 2 - 1, false)] {
+            let mut session = handler_work_session(directory.path(), limit);
+            let mut extract = |name| {
+                adapter
+                    .extract_with_session(
+                        source,
+                        &SourceFile {
+                            path: format!("{name}.{suffix}").into(),
+                            language,
+                        },
+                        &mut session,
+                    )
+                    .unwrap()
+            };
+            let (first, second) = (extract("first"), extract("second"));
+            assert_eq!(first.definitions[0].matcher, "report updated");
+            assert_eq!(second.definitions[0].matcher, "report updated");
+            assert!(first.definitions[0].handler.comparable, "{case}, {limit}");
+            assert!(first.diagnostics.is_empty(), "{case}, {limit}");
+            assert_eq!(
+                second.definitions[0].handler.has_representation(),
+                both_fit,
+                "{case}, {limit}"
+            );
+            assert_eq!(second.diagnostics.len(), usize::from(!both_fit));
+            if let [diagnostic] = second.diagnostics.as_slice() {
+                assert!(crate::source_adapter::is_completeness_diagnostic(
+                    diagnostic
+                ));
+                assert!(diagnostic
+                    .message
+                    .contains("handler fingerprint work limit"));
+                assert!(second.definitions[0].handler.behavior_signature.is_empty());
+            }
+            let result = crate::analysis::analyze(
+                first
+                    .definitions
+                    .into_iter()
+                    .chain(second.definitions)
+                    .collect(),
+                vec![],
+                &config,
+            )
+            .unwrap();
+            let finding = result
+                .findings
+                .iter()
+                .find(|finding| finding.rule == Rule::DuplicateMatcher)
+                .expect("both definitions retain their matcher");
+            assert_eq!(finding.evidence.handler_similarity, both_fit.then_some(1.0));
+        }
+    }
+}
+
+/// Charges argument syntax and uncached enclosing declarations before computing the handler.
+#[test]
+fn handler_fingerprint_work_counts_bound_arguments_and_uncached_declarations() {
+    const BODY: &str = "function handler(value) { publish(value); }";
+    const ARGUMENTS: &str = "(null, 1)";
+    const SETTINGS: &str = "const settings = { label: 'ready' };";
+    let directory = tempfile::tempdir().unwrap();
+    let budget = BODY.len() + ARGUMENTS.len() + SETTINGS.len();
+    for (declaration, limit, expected) in [
+        (SETTINGS, budget - 1, false),
+        (SETTINGS, budget, true),
+        (
+            "const settings = 'ready';",
+            BODY.len() + ARGUMENTS.len(),
+            true,
+        ),
+    ] {
+        let source =
+            format!("{declaration}\n{BODY}\nGiven('publish a report', handler.bind{ARGUMENTS});");
+        let mut session = handler_work_session(directory.path(), limit);
+        let extracted = TYPESCRIPT_ADAPTER
+            .extract_with_session(&source, &file(TYPESCRIPT), &mut session)
+            .unwrap();
+        assert_eq!(extracted.definitions.len(), 1);
+        assert_eq!(
+            extracted.definitions[0].handler.comparable, expected,
+            "{source}"
+        );
+        assert_eq!(extracted.diagnostics.len(), usize::from(!expected));
+        if expected {
+            assert!(extracted.definitions[0]
+                .handler
+                .source_snippet
+                .contains(ARGUMENTS));
+        } else {
+            assert!(extracted.definitions[0].handler.source_snippet.is_empty());
+        }
+    }
+}
+
+/// Checks decorated matchers survive both method and enclosing-scope budget refusals.
+#[test]
+fn decorated_fingerprint_work_uses_the_same_session_allowance() {
+    let source = r#"
+import { Given } from 'playwright-bdd/decorators';
+class Steps {
+  @Given('account ready')
+  first() { load(); publish(); }
+
+  @Given('report published')
+  second() { load(); publish(); }
+
+  @Given('payment rejected')
+  third() { refund(); warn(); }
+
+  @Given('shared step')
+  fourth() { load(); publish(); }
+
+  @Given('shared step')
+  fifth() { load(); publish(); }
+}
+"#;
+    let directory = tempfile::tempdir().unwrap();
+    let config = crate::config::Config::load(directory.path(), Default::default()).unwrap();
+    // A 64-byte allowance fits the first method and is smaller than its enclosing class body.
+    for (budget, comparable) in [(0, false), (64, false), (1024 * 1024, true)] {
+        let mut session = handler_work_session(directory.path(), budget);
+        let extracted = TYPESCRIPT_ADAPTER
+            .extract_with_session(source, &file(TYPESCRIPT), &mut session)
+            .unwrap();
+        assert_eq!(extracted.definitions.len(), 5);
+        assert_eq!(extracted.diagnostics.len(), usize::from(!comparable));
+        assert!(extracted
+            .definitions
+            .iter()
+            .all(|definition| definition.handler.comparable == comparable));
+        let result = crate::analysis::analyze(extracted.definitions, vec![], &config).unwrap();
+        let matcher = result
+            .findings
+            .iter()
+            .find(|finding| finding.rule == Rule::DuplicateMatcher)
+            .expect("both decorated definitions still contribute their matcher");
+        assert_eq!(
+            matcher.evidence.handler_similarity,
+            comparable.then_some(1.0)
+        );
+        let duplicates = result
+            .findings
+            .iter()
+            .filter(|finding| finding.rule == Rule::DuplicateHandler)
+            .collect::<Vec<_>>();
+        assert_eq!(duplicates.len(), if comparable { 3 } else { 0 });
+        assert!(duplicates.iter().all(|finding| {
+            finding.primary.line != 10 && finding.related.iter().all(|location| location.line != 10)
+        }));
+    }
+}
+
 /// Verify binding a resolved named handler preserves its comparable body and definition.
 #[test]
 fn resolves_bound_named_handlers_without_dropping_the_definition() {
@@ -5107,8 +5550,20 @@ fn assert_literal_cache_matches_walk(source: &str, language: SourceLanguage, lab
     while let Some(node) = stack.pop() {
         let pair = match node.kind() {
             "method_definition" => Some((
-                fingerprint_method_handler(node, bytes, &assertions, &cached),
-                fingerprint_method_handler(node, bytes, &assertions, &walked),
+                fingerprint_method_handler(
+                    node,
+                    bytes,
+                    &assertions,
+                    &cached,
+                    &mut WorkBudget::new(usize::MAX),
+                ),
+                fingerprint_method_handler(
+                    node,
+                    bytes,
+                    &assertions,
+                    &walked,
+                    &mut WorkBudget::new(usize::MAX),
+                ),
             )),
             "arrow_function"
             | "function_expression"
@@ -5123,6 +5578,7 @@ fn assert_literal_cache_matches_walk(source: &str, language: SourceLanguage, lab
                     true,
                     &assertions,
                     &cached,
+                    &mut WorkBudget::new(usize::MAX),
                 )),
                 Some(fingerprint_handler(
                     node,
@@ -5131,6 +5587,7 @@ fn assert_literal_cache_matches_walk(source: &str, language: SourceLanguage, lab
                     true,
                     &assertions,
                     &walked,
+                    &mut WorkBudget::new(usize::MAX),
                 )),
             )),
             _ => None, // fail-closed: other kinds are not callables; the comparison floors fail an empty sweep

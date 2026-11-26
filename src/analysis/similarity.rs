@@ -204,11 +204,14 @@ pub(super) fn event_overlap_available(left: &StepDefinition, right: &StepDefinit
     left.analysis_profile().scores_event_overlap && right.analysis_profile().scores_event_overlap
 }
 
-/// Whether two handlers can run in the same runtime context. Rejects differing paths when either
+/// Whether two represented handlers can run in the same runtime context. Rejects differing paths when either
 /// captures lexical file context, differing handler domains, and differing runtime contexts when
 /// both handlers have one; a handler without a runtime context does not gate.
 pub(super) fn handler_runtime_compatible(left: &StepDefinition, right: &StepDefinition) -> bool {
     use crate::source_adapter::semantics::CaptureContext;
+    if !left.handler.has_representation() || !right.handler.has_representation() {
+        return false;
+    }
     if (left.capture_context() == CaptureContext::LexicalFile
         || right.capture_context() == CaptureContext::LexicalFile)
         && left.location.path != right.location.path

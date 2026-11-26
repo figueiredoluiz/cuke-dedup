@@ -6,6 +6,7 @@ use crate::model::{
     bounded_source_snippet, stable_fingerprint, BehaviorEvent, ControlFlowOperation, EffectStream,
     HandlerFingerprint, HandlerSemantics, RepresentationEncoding,
 };
+use crate::resource_limits::WorkBudget;
 use crate::stub_vocabulary::is_stub_label;
 use std::borrow::Cow;
 use std::cell::OnceCell;
@@ -184,27 +185,6 @@ pub(super) fn bind_arguments<'tree>(handler: Node<'tree>, source: &[u8]) -> Opti
     handler.child_by_field_name("arguments")
 }
 
-/// Fingerprints a registration handler, reading module constants from the file's `module` index.
-pub(super) fn fingerprint_handler<'tree>(
-    handler: Node<'tree>,
-    bound_arguments: Option<Node<'tree>>,
-    source: &[u8],
-    comparable: bool,
-    assertions: &AssertionBindings,
-    module: &ModuleScope<'tree>,
-) -> HandlerFingerprint {
-    let declared = declared_identifiers(handler, source);
-    fingerprint_node(
-        handler,
-        bound_arguments,
-        source,
-        comparable,
-        &declared,
-        assertions,
-        module,
-    )
-}
-
 /// Fingerprints a decorated class method without its name or decorator metadata.
 ///
 /// Parameters and runtime modifiers remain part of the fingerprint: default initializers execute
@@ -215,11 +195,15 @@ pub(super) fn fingerprint_method_handler<'tree>(
     source: &[u8],
     assertions: &AssertionBindings,
     module: &ModuleScope<'tree>,
+    budget: &mut WorkBudget,
 ) -> Option<HandlerFingerprint> {
     debug_assert_eq!(method.kind(), "method_definition");
     let name = method.child_by_field_name("name")?;
     let parameters = method.child_by_field_name("parameters")?;
     let body = method.child_by_field_name("body")?;
+    if !module.admit_handler_work(method, None, source, budget) {
+        return Some(HandlerFingerprint::unavailable());
+    }
     let mut identifiers = IdentifierNames::default();
     collect_parameter_bindings(parameters, source, &mut identifiers);
     collect_declared_locals(body, source, &mut identifiers);
@@ -277,20 +261,19 @@ pub(super) fn fingerprint_method_handler<'tree>(
     // before measuring executed behavior so two one-assertion methods do not gain artificial
     // 50% overlap merely because both are methods.
     let mut signature = vec![BehaviorEvent::Method(semantic_prefix.clone())];
-    signature.extend(behavior_signature(
-        parameters,
-        source,
-        &declared,
-        assertions,
-        &local_constants,
-    ));
-    signature.extend(behavior_signature(
-        body,
-        source,
-        &declared,
-        assertions,
-        &local_constants,
-    ));
+    for node in [parameters, body] {
+        if !collect_behavior(
+            node,
+            source,
+            &declared,
+            assertions,
+            &local_constants,
+            &mut signature,
+            budget,
+        ) {
+            return Some(HandlerFingerprint::unavailable());
+        }
+    }
     let source_snippet = format!("{semantic_prefix} {raw_parameters} {raw_body}");
     let comparable = !signature.iter().any(BehaviorEvent::is_unresolved_assertion);
 
@@ -484,16 +467,20 @@ fn collect_parameter_bindings(parameters: Node<'_>, source: &[u8], output: &mut 
     }
 }
 
-/// Builds every fingerprint form of `handler`, with `bound_arguments` appended as call context.
-fn fingerprint_node<'tree>(
+/// Fingerprints a registration handler within the shared work allowance, including bound context.
+pub(super) fn fingerprint_handler<'tree>(
     handler: Node<'tree>,
     bound_arguments: Option<Node<'tree>>,
     source: &[u8],
     comparable: bool,
-    declared: &BTreeMap<String, String>,
     assertions: &AssertionBindings,
     module: &ModuleScope<'tree>,
+    budget: &mut WorkBudget,
 ) -> HandlerFingerprint {
+    if !module.admit_handler_work(handler, bound_arguments, source, budget) {
+        return HandlerFingerprint::unavailable();
+    }
+    let declared = &declared_identifiers(handler, source);
     let raw = node_text(handler, source);
     let mut exact = raw.to_owned();
     // A module-scoped constant is a fixed value every handler in the file reads, so substituting it
@@ -513,7 +500,18 @@ fn fingerprint_node<'tree>(
     let mut alpha = serialize_ast(handler, source, &alpha_declared, AstMode::Alpha);
     let mut structural = serialize_ast(handler, source, &structural_declared, AstMode::Structural);
     let local_constants = LocalConstants::collect(handler, source, declared, module);
-    let mut signature = behavior_signature(handler, source, declared, assertions, &local_constants);
+    let mut signature = Vec::new();
+    if !collect_behavior(
+        handler,
+        source,
+        declared,
+        assertions,
+        &local_constants,
+        &mut signature,
+        budget,
+    ) {
+        return HandlerFingerprint::unavailable();
+    }
     let mut source_snippet = raw.to_owned();
     if let Some(arguments) = bound_arguments {
         let no_declarations = BTreeMap::new();
@@ -530,13 +528,17 @@ fn fingerprint_node<'tree>(
             &mut structural,
             &serialize_ast(arguments, source, &no_declarations, AstMode::Structural),
         );
-        signature.extend(behavior_signature(
+        if !collect_behavior(
             arguments,
             source,
             &no_declarations,
             assertions,
             &LocalConstants::default(),
-        ));
+            &mut signature,
+            budget,
+        ) {
+            return HandlerFingerprint::unavailable();
+        }
         source_snippet.push_str(" bound with ");
         source_snippet.push_str(node_text(arguments, source));
     }
@@ -753,6 +755,8 @@ struct ModuleLiterals<'tree> {
     declarations: Vec<Node<'tree>>,
     /// `ModuleScope::shadows` without the cached ones.
     shadows: Vec<Node<'tree>>,
+    /// Source bytes of declarations that the fingerprint revisits for every handler.
+    repeated_bytes: usize,
 }
 
 impl<'tree> ModuleScope<'tree> {
@@ -798,6 +802,7 @@ impl<'tree> ModuleScope<'tree> {
             bindings: BTreeMap::new(),
             declarations: scope.declarations.clone(),
             shadows: scope.shadows.clone(),
+            repeated_bytes: declaration_bytes(&scope.declarations),
         });
         scope
     }
@@ -811,6 +816,31 @@ impl<'tree> ModuleScope<'tree> {
             literals.declarations.len(),
             literals.shadows.len(),
         )
+    }
+
+    /// Charges the handler, bound arguments and repeated enclosing-scope work before traversal.
+    pub(super) fn admit_handler_work(
+        &self,
+        handler: Node<'tree>,
+        bound_arguments: Option<Node<'tree>>,
+        source: &[u8],
+        budget: &mut WorkBudget,
+    ) -> bool {
+        let handler_bytes = handler.byte_range().len().max(1);
+        let argument_bytes = bound_arguments.map_or(0, |node| node.byte_range().len());
+        if budget.charge(handler_bytes.saturating_add(argument_bytes)) {
+            return false;
+        }
+        let mut ancestor = handler.parent();
+        while let Some(node) = ancestor.filter(|node| *node != self.root) {
+            // Non-module shadow scans inspect direct declarations and captured bindings. The
+            // enclosing span bounds the source they can visit without another discovery pass.
+            if budget.charge(node.byte_range().len()) {
+                return false;
+            }
+            ancestor = node.parent();
+        }
+        !budget.charge(self.literals(source).repeated_bytes)
     }
 
     /// The file's cached constants; `source` is the text `root` was parsed from.
@@ -867,15 +897,27 @@ impl<'tree> ModuleScope<'tree> {
             }
             let uncached = |declarations: &[Node<'tree>]| {
                 let walked = declarations.iter().copied();
-                walked.filter(|d| !cached.contains(&d.id())).collect()
+                walked
+                    .filter(|d| !cached.contains(&d.id()))
+                    .collect::<Vec<_>>()
             };
+            let declarations = uncached(&self.declarations);
             ModuleLiterals {
                 bindings,
-                declarations: uncached(&self.declarations),
+                repeated_bytes: declaration_bytes(&declarations),
+                declarations,
                 shadows: uncached(&self.shadows),
             }
         })
     }
+}
+
+/// Counts source bytes of declarations retained for per-handler walks.
+fn declaration_bytes(declarations: &[Node<'_>]) -> usize {
+    declarations
+        .iter()
+        .map(|node| node.byte_range().len())
+        .fold(0, usize::saturating_add)
 }
 
 /// Each `(declarator, name)` of a `const` declaration that only binds identifiers to literals or
@@ -1056,7 +1098,7 @@ impl<'m> LocalConstants<'m> {
 
     /// Collects the constants a handler body can resolve, including the module's own declarations.
     ///
-    /// `behavior_signature` reads these bindings to recognise assertions and to resolve their
+    /// `collect_behavior` reads these bindings to recognise assertions and to resolve their
     /// expected values, so a proven module constant has to be visible here too. `duplicate-handler`
     /// compares `alpha_normalized` *and* `behavior_signature`, and seeding only one of them leaves
     /// two handlers that read the same value through differently named constants unequal.
@@ -1842,27 +1884,8 @@ fn local_function_declarations<'tree>(
     declarations
 }
 
-/// Builds the handler's ordered behavior-event stream with assertion provenance and constant context.
-fn behavior_signature(
-    handler: Node<'_>,
-    source: &[u8],
-    declared: &BTreeMap<String, String>,
-    assertions: &AssertionBindings,
-    local_constants: &LocalConstants,
-) -> Vec<BehaviorEvent> {
-    let mut signature = Vec::new();
-    collect_behavior(
-        handler,
-        source,
-        declared,
-        assertions,
-        local_constants,
-        &mut signature,
-    );
-    signature
-}
-
-/// Collects executed and deferred call evidence, bounds local-function expansion and marks unresolved callback parameters conservatively.
+/// Collects ordered call evidence, charging each repeated local helper traversal before expanding it.
+/// Returns false on refusal so the caller discards the entire fingerprint.
 fn collect_behavior<'tree>(
     node: Node<'tree>,
     source: &[u8],
@@ -1870,7 +1893,8 @@ fn collect_behavior<'tree>(
     assertions: &AssertionBindings,
     local_constants: &LocalConstants,
     output: &mut Vec<BehaviorEvent>,
-) {
+    budget: &mut WorkBudget,
+) -> bool {
     let root_id = node.id();
     let local_functions = local_function_declarations(node, source);
     let mut stack = vec![(node, false, false, false)];
@@ -2017,6 +2041,9 @@ fn collect_behavior<'tree>(
                             // Arguments are not substituted, so the body's values are unproven.
                             output.push(BehaviorEvent::unresolved_assertion(deferred));
                         } else {
+                            if budget.charge(target.byte_range().len()) {
+                                return false;
+                            }
                             push_children(
                                 target,
                                 deferred,
@@ -2036,6 +2063,12 @@ fn collect_behavior<'tree>(
                         }
                         continue;
                     }
+                    // Compound callees are read again to build this event. Nested calls
+                    // each own their representation, so charge every such traversal.
+                    if function.kind() != "identifier" && budget.charge(function.byte_range().len())
+                    {
+                        return false;
+                    }
                     output.push(call_behavior_event(function, source, declared));
                 }
             }
@@ -2053,6 +2086,7 @@ fn collect_behavior<'tree>(
             &mut stack,
         );
     }
+    true
 }
 
 /// Describes an assertion by its terminal matcher, modifiers, and asserted subject.
@@ -2292,37 +2326,41 @@ fn call_behavior_event(
     ))
 }
 
-/// Resolves a supported receiver chain to a canonical name, returning `None` for unsupported expressions.
+/// Assembles a canonical static receiver in one pass, or returns None for unrelated syntax.
 fn static_call_receiver(
-    node: Node<'_>,
+    mut node: Node<'_>,
     source: &[u8],
     declared: &BTreeMap<String, String>,
 ) -> Option<String> {
-    match node.kind() {
-        "identifier" => {
-            let name = node_text(node, source);
-            Some(declared.get(name).map_or(name, String::as_str).to_owned())
-        }
-        "this" | "super" => Some(node_text(node, source).to_owned()),
-        "parenthesized_expression" | "await_expression" => {
-            static_call_receiver(node.named_child(0)?, source, declared)
-        }
-        "member_expression" | "subscript_expression" => {
-            let (object, property) = assertion_property(node, source)?;
-            let object = static_call_receiver(object, source, declared)?;
-            Some(format!("{object}.{}", encode_event_component(property)))
-        }
-        "call_expression" => {
-            let function = node.child_by_field_name("function")?;
-            if let Some((object, _)) = assertion_property(function, source) {
-                static_call_receiver(object, source, declared)
-            } else if function.kind() == "identifier" {
-                let name = node_text(function, source);
-                Some(declared.get(name).map_or(name, String::as_str).to_owned())
-            } else {
-                None
+    let mut properties = Vec::new();
+    let base = loop {
+        node = match node.kind() {
+            "identifier" => {
+                let name = node_text(node, source);
+                break declared.get(name).map_or(name, String::as_str);
             }
-        }
-        _ => None,
+            "this" | "super" => break node_text(node, source),
+            "parenthesized_expression" | "await_expression" => node.named_child(0)?,
+            "member_expression" | "subscript_expression" => {
+                let (object, property) = assertion_property(node, source)?;
+                properties.push(property);
+                object
+            }
+            "call_expression" => {
+                let function = node.child_by_field_name("function")?;
+                match assertion_property(function, source) {
+                    Some((object, _)) => object,
+                    None if function.kind() == "identifier" => function,
+                    _ => return None, // fail-closed: the caller uses structural syntax for unknown receivers.
+                }
+            }
+            _ => return None, // fail-closed: compound syntax stays in the existing structural fallback.
+        };
+    };
+    let mut receiver = base.to_owned();
+    for property in properties.into_iter().rev() {
+        receiver.push('.');
+        receiver.push_str(&encode_event_component(property));
     }
+    Some(receiver)
 }

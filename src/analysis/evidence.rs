@@ -199,10 +199,11 @@ fn matcher_diff(left: &str, right: &str) -> MatcherDiff {
     }
 }
 
-/// Names the strictest handler fingerprint the pair shares, checked in order exact, normalized,
-/// alpha-normalized, structural; when none match, reports that behaviour signatures differ.
+/// Describes the strictest shared fingerprint or why a handler comparison is unavailable.
 pub(super) fn handler_evidence(left: &StepDefinition, right: &StepDefinition) -> String {
-    if left.handler.exact == right.handler.exact {
+    if !left.handler.has_representation() || !right.handler.has_representation() {
+        "Handler fingerprint unavailable".to_owned()
+    } else if left.handler.exact == right.handler.exact {
         "Handlers have the same exact syntax fingerprint".to_owned()
     } else if left.handler.normalized == right.handler.normalized {
         "Handlers differ only in comments or formatting".to_owned()

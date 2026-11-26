@@ -185,6 +185,7 @@ fn release_resource_limits_match_the_documented_policy() {
     assert_eq!(MAX_REGISTRATION_MODULES, 1_024);
     assert_eq!(MAX_REGISTRATION_MODULE_BYTES, 64 * 1024 * 1024);
     assert_eq!(MAX_ASSERTION_RESOLUTION_WORK, 1_000_000);
+    assert_eq!(MAX_ECMASCRIPT_HANDLER_WORK_BYTES, 64 * 1024 * 1024);
     assert_eq!(MAX_REGISTRATION_RESOLUTION_STATES, 16_384);
     assert_eq!(MAX_PROJECT_CONFIG_EXTENDS_DEPTH, 16);
     assert_eq!(MAX_PROJECT_METADATA_FILES, 1_024);

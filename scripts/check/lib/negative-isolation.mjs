@@ -97,6 +97,10 @@ function assertRecord(record) {
     || typeof record.handler.comparable !== "boolean" || typeof record.handler.trivial !== "boolean") {
     throw new Error(`fingerprint record ${record.path}:${record.line} is not schema 1 with every isolation field (missing: ${missing.join(", ") || "comparable or trivial"})`);
   }
+  const { available, comparable } = record.handler;
+  if ((available !== undefined && typeof available !== "boolean") || (available === false && comparable)) {
+    throw new Error(`fingerprint record ${record.path}:${record.line} has invalid handler availability`);
+  }
 }
 
 /** Same items with the same multiplicity, in any order. */
@@ -142,13 +146,20 @@ function participants(records, expected, isolation) {
   });
 }
 
+/** Whether all records carry handler representations. Older records omit the marker. */
+function handlersAvailable(records) {
+  return records.every((record) => record.handler.available !== false);
+}
+
 /**
  * Fields whose values are not all equal across the records, in `ISOLATION_FIELDS` order.
+ * Unavailable handler keys carry no comparison evidence.
  * @param {object[]} records
  * @returns {string[]}
  */
 export function differingFields(records) {
-  return ISOLATION_FIELDS.filter((field) => new Set(records.map((record) => fieldValue(record, field))).size > 1);
+  const fields = handlersAvailable(records) ? ISOLATION_FIELDS : ISOLATION_FIELDS.filter((field) => !HANDLER_KEYS.includes(field));
+  return fields.filter((field) => new Set(records.map((record) => fieldValue(record, field))).size > 1);
 }
 
 /**
@@ -157,24 +168,25 @@ export function differingFields(records) {
  * fields decide it: raw flags that differ, or read by another dialect, may still have equal effective flags, and a positional
  * definition is its own matcher class, so a positional pair is never normalized-equal.
  */
-function assertRelationships(pair, actual) {
+function assertRelationships(pair, actual, available) {
   /** Whether any of the fields is among the ones the participants differ in. */
   const differ = (...fields) => fields.some((field) => actual.includes(field));
   const { relationships } = pair;
   /** Whether the matcher fields say the matchers are equal, `undefined` when the flags or their dialect leave it open. */
   const matchersEqual = (...fields) => (differ(...fields) ? false : differ("matcherFlags", "domain") ? undefined : true);
   const expected = {
-    sameHandler: !differ("handler.alphaNormalized", "handler.behavior"),
-    sameHandlerStructure: !differ("handler.structural"),
-    sameStructure: !differ("handler.structural", "handler.behavior"),
+    sameHandler: available && !differ("handler.alphaNormalized", "handler.behavior"),
+    sameHandlerStructure: available && !differ("handler.structural"),
+    sameStructure: available && !differ("handler.structural", "handler.behavior"),
+    // When present, equal behavior implies equal deferred assertions.
+    sameDeferredAssertions: (!available || !differ("handler.behavior")) ? available : undefined,
     exactMatcher: matchersEqual("matcher", "matcherKind"),
     normalizedMatcher: pair.positional ? false : matchersEqual("normalizedMatcher", "matcherKind"),
   };
   const wrong = Object.entries(expected)
     .filter(([name, value]) => value !== undefined && relationships[name] !== value)
     .map(([name]) => name);
-  // Deferred assertions are part of the behavior signature, so a pair that differs in them differs in behavior.
-  if (relationships.sameDeferredAssertions === false && !differ("handler.behavior")) wrong.push("sameDeferredAssertions");
+  if (!available && pair.handlerSimilarity !== null) wrong.push("handlerSimilarity");
   if (wrong.length > 0) {
     throw new Error(`the pair record's relationships disagree with the fingerprint records on: ${wrong.join(", ")}`);
   }
@@ -211,7 +223,7 @@ function checkHandlerPair(expected, isolation, selected, actual, evidence) {
   const skipped = census.limited;
   const pair = pairOf(selected[0], selected[1], evidence.records, evidence.pairs);
   if (pair !== null) {
-    assertRelationships(pair, actual);
+    assertRelationships(pair, actual, handlersAvailable(selected));
     if (pair.rules.includes(expected.rule)) {
       throw new Error(`the pair record lists ${expected.rule}, so the finding was produced and then suppressed or collapsed; the absence is not isolated`);
     }

@@ -32,6 +32,7 @@ pub(crate) const MAX_DIRECT_MATCH_CACHE_BYTES: usize = 64 * 1024 * 1024;
 pub(crate) const MAX_REGISTRATION_MODULES: usize = 1_024;
 pub(crate) const MAX_REGISTRATION_MODULE_BYTES: usize = 64 * 1024 * 1024;
 pub(crate) const MAX_ASSERTION_RESOLUTION_WORK: usize = 1_000_000;
+pub(crate) const MAX_ECMASCRIPT_HANDLER_WORK_BYTES: usize = 64 * 1024 * 1024;
 pub(crate) const MAX_REGISTRATION_RESOLUTION_STATES: usize = 16_384;
 pub(crate) const MAX_PROJECT_CONFIG_EXTENDS_DEPTH: usize = 16;
 pub(crate) const MAX_PROJECT_METADATA_FILES: usize = 1_024;
