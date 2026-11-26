@@ -105,7 +105,7 @@ cuke-dedup . --baseline .cuke-dedup-baseline.json --fail-on-new 3
 
 `--fail-on-new` defaults to zero when no count is supplied and requires `--baseline` or
 `--baseline-from-ref`. `--update-baseline` requires the file form and cannot be combined with
-`--fail-on-new`. The Action exposes `baseline`, `baseline-from-ref`, and `fail-on-new` inputs.
+`--fail-on-new`. The Action exposes `baseline`, `baseline-from-ref`, and `fail-on-new` inputs. A file baseline must resolve to a regular file when applied and must be separate from every selected file report.
 
 Baselines store sorted semantic fingerprints with multiplicity counts. Renames and unrelated line
 changes do not make a finding new, while an additional occurrence beyond the recorded count does.

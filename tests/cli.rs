@@ -75,6 +75,187 @@ fn init_repository_with(root: &Path, git: impl Fn() -> ProcessCommand) {
     }
 }
 
+/// Applying a baseline reads a regular file and refuses a directory before parsing.
+#[test]
+fn baseline_apply_requires_regular_file() {
+    let directory = tempfile::tempdir().unwrap();
+    let root = directory.path();
+    write(
+        root,
+        "baseline.json",
+        r#"{"schemaVersion":3,"fingerprints":{}}"#,
+    );
+    fs::create_dir(root.join("directory.json")).unwrap();
+
+    for (path, expected) in [("baseline.json", 0), ("directory.json", 2)] {
+        let output = run_on(root, &["--baseline", path, "--reporters", "jsonl"]);
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert_eq!(output.status.code(), Some(expected), "{path}: {stderr}");
+        if expected == 0 {
+            let report = String::from_utf8_lossy(&output.stdout);
+            assert!(report.contains(r#""type":"summary""#), "{report}");
+        } else {
+            assert!(stderr.contains("regular file"), "{stderr}");
+        }
+    }
+}
+
+/// Baselines and selected reports cannot share a destination, including through a path alias.
+#[test]
+fn baseline_report_destinations_are_distinct() {
+    let directory = tempfile::tempdir().unwrap();
+    let root = directory.path();
+    let original = r#"{"schemaVersion":3,"fingerprints":{}}"#;
+    let report_path = root.join("reports/cuke-dedup.json");
+    let hard_link = root.join("alias.json");
+    write(root, "steps.ts", "Given('sample', () => work());\n");
+    write(
+        root,
+        "sample.feature",
+        "Feature: sample\n  Scenario: one\n    Given sample\n",
+    );
+    write(root, "reports/earlier/census.txt", "untouched\n");
+    write(root, "reports/cuke-dedup.json", original);
+    fs::hard_link(&report_path, &hard_link).unwrap();
+    for alias in [
+        "reports/cuke-dedup.json",
+        "reports/earlier/../cuke-dedup.json",
+        "alias.json",
+    ] {
+        for update in [false, true] {
+            let mut args = vec![
+                "--baseline",
+                alias,
+                "--output",
+                "reports",
+                "--reporters",
+                "sarif,json",
+            ];
+            if update {
+                args.push("--update-baseline");
+            }
+            let output = run_on(root, &args);
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            assert_eq!(output.status.code(), Some(2), "{args:?}: {stderr}");
+            assert!(
+                stderr.contains("baseline") && stderr.contains("report"),
+                "{stderr}"
+            );
+            assert_eq!(fs::read_to_string(&report_path).unwrap(), original);
+            assert_eq!(fs::read_to_string(&hard_link).unwrap(), original);
+            assert!(!root.join("reports/cuke-dedup.sarif").exists());
+        }
+    }
+
+    let absent = run_on(
+        root,
+        &[
+            "--baseline",
+            "fresh/cuke-dedup.json",
+            "--output",
+            "fresh",
+            "--reporters",
+            "sarif,json",
+            "--update-baseline",
+        ],
+    );
+    let stderr = String::from_utf8_lossy(&absent.stderr);
+    assert_eq!(absent.status.code(), Some(2), "{stderr}");
+    assert!(
+        stderr.contains("baseline") && stderr.contains("report"),
+        "{stderr}"
+    );
+    assert!(!root.join("fresh/cuke-dedup.json").exists());
+    assert!(!root.join("fresh/cuke-dedup.sarif").exists());
+
+    let incomplete = run_on(
+        root,
+        &[
+            "--baseline",
+            "reports/cuke-dedup.json",
+            "--output",
+            "reports",
+            "--reporters",
+            "sarif,json",
+            "--update-baseline",
+            "--require-features",
+            "--features",
+            "missing.feature",
+        ],
+    );
+    let stderr = String::from_utf8_lossy(&incomplete.stderr);
+    assert_eq!(incomplete.status.code(), Some(2), "{stderr}");
+    assert!(
+        stderr.contains("baseline") && stderr.contains("report"),
+        "{stderr}"
+    );
+    assert_eq!(fs::read_to_string(&report_path).unwrap(), original);
+    assert!(!root.join("reports/cuke-dedup.sarif").exists());
+
+    #[cfg(unix)]
+    {
+        let uninspectable = "x".repeat(4096);
+        assert_eq!(
+            fs::metadata(root.join(&uninspectable))
+                .unwrap_err()
+                .raw_os_error(),
+            Some(libc::ENAMETOOLONG)
+        );
+        let refused = run_on(
+            root,
+            &[
+                "--baseline",
+                &uninspectable,
+                "--output",
+                "unverified",
+                "--reporters",
+                "json,sarif",
+                "--update-baseline",
+            ],
+        );
+        let stderr = String::from_utf8_lossy(&refused.stderr);
+        assert_eq!(refused.status.code(), Some(2), "{stderr}");
+        assert!(stderr.contains("cannot verify that baseline"), "{stderr}");
+        assert!(!root.join("unverified/cuke-dedup.json").exists());
+        assert!(!root.join("unverified/cuke-dedup.sarif").exists());
+    }
+
+    // An unselected reporter leaves the same path usable as a baseline; a distinct selected
+    // report can then be written alongside the baseline.
+    let unselected = run_on(
+        root,
+        &[
+            "--baseline",
+            "reports/cuke-dedup.json",
+            "--output",
+            "reports",
+            "--reporters",
+            "jsonl",
+        ],
+    );
+    assert!(unselected.status.success(), "{:?}", unselected.stderr);
+    assert_eq!(fs::read_to_string(&report_path).unwrap(), original);
+    write(root, "ordinary.json", original);
+    let distinct = run_on(
+        root,
+        &[
+            "--baseline",
+            "ordinary.json",
+            "--output",
+            "reports",
+            "--reporters",
+            "json",
+        ],
+    );
+    assert!(distinct.status.success(), "{:?}", distinct.stderr);
+    let report: Value = serde_json::from_slice(&fs::read(report_path).unwrap()).unwrap();
+    assert!(report.get("summary").is_some(), "{report}");
+    assert_eq!(
+        fs::read_to_string(root.join("ordinary.json")).unwrap(),
+        original
+    );
+}
+
 /// Current and historical feature corpora share one invocation's concrete-step admission budget.
 #[test]
 fn reference_baselines_share_the_feature_expansion_budget() {
