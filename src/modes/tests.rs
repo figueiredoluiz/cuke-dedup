@@ -434,6 +434,8 @@ fn git_comparison_metadata_copy_enforces_file_and_size_limits() {
     copy_git_info(&input, &output).unwrap();
     #[cfg(unix)]
     {
+        use std::os::unix::fs::PermissionsExt;
+
         let symlink = root.join("symlink");
         std::os::unix::fs::symlink(&input, &symlink).unwrap();
         let error = copy_git_info(&symlink, &output).unwrap_err();
@@ -441,6 +443,17 @@ fn git_comparison_metadata_copy_enforces_file_and_size_limits() {
             error.to_string().contains("regular file of at most 1 MiB"),
             "{error}"
         );
+
+        let permissions = fs::metadata(&input).unwrap().permissions();
+        fs::set_permissions(&input, fs::Permissions::from_mode(0o000)).unwrap();
+        if File::open(&input).is_err() {
+            let error = copy_git_info(&input, &output).unwrap_err();
+            assert_eq!(
+                error.downcast_ref::<std::io::Error>().unwrap().kind(),
+                std::io::ErrorKind::PermissionDenied
+            );
+        }
+        fs::set_permissions(&input, permissions).unwrap();
     }
     fs::write(&input, vec![b'a'; (1024 * 1024) + 1]).unwrap();
     for invalid in [input.as_path(), root] {
@@ -458,31 +471,79 @@ fn git_comparison_metadata_copy_enforces_file_and_size_limits() {
     assert_eq!(fs::read(&output).unwrap(), b"*.tmp\n");
 }
 
-/// Checks Git comparison preserves the index timestamp and reports genuine input errors.
-#[test]
-fn changed_files_use_an_independent_index_snapshot() {
+/// Creates a fixture repository with a single committed file.
+fn repository_with_tracked_file() -> (tempfile::TempDir, PathBuf) {
     let directory = tempfile::tempdir().unwrap();
     let root = directory.path();
     let source = root.join("tracked.ts");
     fs::write(&source, "before").unwrap();
     initialize_repository(root);
-    let original = root.join(".git/index");
-    let snapshot = root.join(".git/fixture-snapshot");
+    (directory, source)
+}
+
+/// Gives an index fixture a known old modification time.
+fn set_index_test_timestamp(path: &Path) {
     let timestamp = fs::FileTimes::new().set_modified(
         std::time::SystemTime::UNIX_EPOCH + std::time::Duration::from_secs(1_200_000_000),
     );
     File::options()
         .write(true)
-        .open(&original)
+        .open(path)
         .unwrap()
         .set_times(timestamp)
         .unwrap();
+}
+
+/// Checks Git comparison preserves the index timestamp and reports genuine input errors.
+#[test]
+fn changed_files_use_an_independent_index_snapshot() {
+    let (directory, source) = repository_with_tracked_file();
+    let root = directory.path();
+    let original = root.join(".git/index");
+    let snapshot = root.join(".git/fixture-snapshot");
+    set_index_test_timestamp(&original);
     copy_git_index(&original, &snapshot).unwrap();
     assert_eq!(
         fs::metadata(&snapshot).unwrap().modified().unwrap(),
         fs::metadata(&original).unwrap().modified().unwrap()
     );
     assert_eq!(fs::read(&snapshot).unwrap(), fs::read(&original).unwrap());
+
+    let occupied = root.join(".git/occupied");
+    fs::create_dir(&occupied).unwrap();
+    let prior = occupied.join("prior");
+    fs::write(&prior, b"existing destination").unwrap();
+    let error = copy_git_index(&original, &occupied).unwrap_err();
+    assert!(
+        matches!(
+            error.kind(),
+            std::io::ErrorKind::IsADirectory
+                | std::io::ErrorKind::PermissionDenied
+                | std::io::ErrorKind::AlreadyExists
+                | std::io::ErrorKind::DirectoryNotEmpty
+        ),
+        "{error}"
+    );
+    assert_eq!(fs::read(&prior).unwrap(), b"existing destination");
+
+    let absent_git = root.join("missing-git");
+    let error = snapshot_shared_index(
+        absent_git.as_os_str(),
+        &original,
+        &root.join(".git"),
+        &root.join(".git/objects"),
+        40,
+    )
+    .unwrap_err();
+    assert!(error
+        .to_string()
+        .contains("failed to inspect the private Git index"));
+
+    fs::write(&original, b"invalid test index").unwrap();
+    let error = git_changed_files(root, "HEAD").unwrap_err();
+    assert!(error
+        .to_string()
+        .contains("failed to inspect the private Git index"));
 
     fs::remove_file(&original).unwrap();
     assert_eq!(
@@ -497,6 +558,403 @@ fn changed_files_use_an_independent_index_snapshot() {
             .contains("failed to snapshot the Git index"),
         "{error}"
     );
+}
+
+/// Checks the index snapshot copy admits the byte limit and leaves no file on refusal.
+#[test]
+fn changed_files_bound_index_snapshot_bytes() {
+    let directory = tempfile::tempdir().unwrap();
+    let source = directory.path().join("source-index");
+    let destination = directory.path().join("index-copy");
+    let index = File::create(&source).unwrap();
+    let limit = 64 * 1024 * 1024;
+
+    index.set_len(limit + 1).unwrap();
+    let error = copy_git_index(&source, &destination).unwrap_err();
+    assert_eq!(error.kind(), std::io::ErrorKind::InvalidData, "{error}");
+    assert!(!destination.exists());
+
+    index.set_len(limit).unwrap();
+    copy_git_index(&source, &destination).unwrap();
+    assert_eq!(fs::metadata(&destination).unwrap().len(), limit);
+
+    for (input, expected, fits) in [
+        (b"ab".as_slice(), b"ab".as_slice(), true),
+        (b"abc".as_slice(), b"abc".as_slice(), true),
+        (b"abcd".as_slice(), b"abc".as_slice(), false),
+    ] {
+        let mut output = Vec::new();
+        let result = copy_git_bytes(input, &mut output, 3, "test input exceeds the limit");
+        assert_eq!(result.is_ok(), fits);
+        if let Err(error) = result {
+            assert_eq!(error.kind(), std::io::ErrorKind::InvalidData);
+            assert_eq!(error.to_string(), "test input exceeds the limit");
+        }
+        assert_eq!(output, expected);
+    }
+}
+
+/// Checks worktree settings are bounded before Git receives a partial or oversized argument list.
+#[test]
+fn changed_files_bound_worktree_settings() {
+    let directory = tempfile::tempdir().unwrap();
+    let root = directory.path();
+    let tracked = root.join("tracked.ts");
+    fs::write(&tracked, "before\n").unwrap();
+    initialize_repository(root);
+    fs::write(&tracked, "after\n").unwrap();
+    let scratch = tempfile::tempdir().unwrap();
+    let executable = git_executable(root).unwrap();
+    let config_path = root.join(".git/config");
+    let original = fs::read_to_string(&config_path).unwrap();
+    fs::write(&config_path, format!("{original}\n[core]\neol = lf\n")).unwrap();
+    let settings = worktree_settings(executable.as_os_str(), root, scratch.path()).unwrap();
+    assert!(settings.contains(&OsString::from("core.eol=lf")));
+    assert_eq!(
+        git_changed_files(root, "HEAD").unwrap(),
+        BTreeSet::from([tracked])
+    );
+
+    let repeated = "eol = lf\n".repeat(24_000);
+    fs::write(&config_path, format!("{original}\n[core]\n{repeated}")).unwrap();
+    let Err(error) = worktree_settings(executable.as_os_str(), root, scratch.path()) else {
+        panic!("oversized worktree settings were accepted");
+    };
+    assert!(
+        error.to_string().contains("worktree settings exceed"),
+        "{error:#}"
+    );
+    let error = git_changed_files(root, "HEAD").unwrap_err();
+    assert!(
+        error.to_string().contains("worktree settings exceed"),
+        "{error:#}"
+    );
+
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+
+        let program = scratch.path().join("fixture-git");
+        let repository = canonical_platform_path(root).unwrap();
+        let excludes = b"# ordinary ignore rules\n";
+        fs::write(root.join("fixture-excludes"), excludes).unwrap();
+        let script = r#"#!/bin/sh
+case "$*" in
+    *--show-scope*)
+        printf 'read\n' >> "${0%/*}/queries"
+        printf 'local\000core.eol\nlf\000local\000core.filemode\000local\000core.excludesfile\nfixture-excludes\000'
+        ;;
+    *--file*) printf 'fixture-excludes\000' ;;
+    *) exit 2 ;;
+esac
+"#;
+        fs::write(&program, script).unwrap();
+        fs::set_permissions(&program, fs::Permissions::from_mode(0o700)).unwrap();
+        let settings = worktree_settings(program.as_os_str(), &repository, scratch.path()).unwrap();
+        let snapshot = scratch.path().join("core.excludesfile");
+        assert_eq!(
+            settings,
+            [
+                OsString::from("core.eol=lf"),
+                OsString::from("core.filemode"),
+                git_path_setting("core.excludesfile", &snapshot),
+            ]
+        );
+        assert_eq!(fs::read(&snapshot).unwrap(), excludes);
+        assert_eq!(fs::read(scratch.path().join("queries")).unwrap(), b"read\n");
+
+        fs::write(root.join("selected"), "# settings\n").unwrap();
+        let cases = [
+            (
+                r"printf 'local\000core.excludesfile\nsettings\000short\000'",
+                "invalid Git worktree settings",
+            ),
+            (
+                r"printf 'unknown\000core.excludesfile\nsettings\000'",
+                "cannot verify the Git configuration scope",
+            ),
+            (
+                r#"case "$*" in
+                    *--show-scope*) printf 'global\000core.excludesfile\nselected/child\000' ;;
+                    *) printf 'selected/child\000' ;;
+                esac"#,
+                "Git setting core.excludesfile",
+            ),
+        ];
+        for (script, expected) in cases {
+            fs::write(&program, format!("#!/bin/sh\n{script}\n")).unwrap();
+            fs::set_permissions(&program, fs::Permissions::from_mode(0o700)).unwrap();
+            let error =
+                worktree_settings(program.as_os_str(), &repository, scratch.path()).unwrap_err();
+            assert!(error.to_string().contains(expected), "{error:#}");
+        }
+    }
+}
+
+/// Checks changed-file comparison reads the split index through owned snapshots.
+#[test]
+fn changed_files_do_not_refresh_the_original_shared_index() {
+    let (directory, source) = repository_with_tracked_file();
+    let root = directory.path();
+    assert!(fixture_git()
+        .current_dir(root)
+        .args(["update-index", "--split-index"])
+        .status()
+        .unwrap()
+        .success());
+    let output = fixture_git()
+        .current_dir(root)
+        .args(["rev-parse", "--shared-index-path"])
+        .output()
+        .unwrap();
+    assert!(output.status.success(), "{:?}", output.stderr);
+    let shared_index = root.join(git_output_path(&output.stdout).unwrap());
+    set_index_test_timestamp(&shared_index);
+    let before = fs::metadata(&shared_index).unwrap().modified().unwrap();
+
+    fs::write(&source, "after").unwrap();
+    assert_eq!(
+        git_changed_files(root, "HEAD").unwrap(),
+        BTreeSet::from([source])
+    );
+    assert_eq!(
+        fs::metadata(&shared_index).unwrap().modified().unwrap(),
+        before
+    );
+
+    fs::write(&shared_index, b"invalid test index").unwrap();
+    let error = git_changed_files(root, "HEAD").unwrap_err();
+    assert!(error
+        .to_string()
+        .contains("failed to inspect the private Git shared index"));
+}
+
+/// Checks only an unambiguous, valid index filename in the private Git directory is admitted.
+#[test]
+fn shared_index_hint_requires_a_private_path_and_matching_digest() {
+    let directory = tempfile::tempdir().unwrap();
+    let root = directory.path();
+    let name = format!("sharedindex.{}", "a".repeat(40));
+    let hint = |path: &Path| {
+        format!(
+            "fatal: {}: index file open failed: missing\n",
+            path.display()
+        )
+    };
+    for path in [PathBuf::from(&name), root.join(&name)] {
+        assert_eq!(
+            shared_index_hint(hint(&path).as_bytes(), root, 40),
+            Some(OsString::from(&name))
+        );
+    }
+    for path in [
+        root.join("other").join(&name),
+        PathBuf::from("..").join(&name),
+        root.join(format!("sharedindex.{}", "g".repeat(40))),
+        root.join(format!("sharedindex.{}", "a".repeat(64))),
+    ] {
+        assert_eq!(shared_index_hint(hint(&path).as_bytes(), root, 40), None);
+    }
+    assert_eq!(
+        shared_index_hint(hint(&root.join(&name)).repeat(2).as_bytes(), root, 40),
+        None
+    );
+}
+
+/// Checks configured Git inputs are bounded regular files relative to the worktree root.
+#[test]
+fn changed_files_validate_configured_git_input_files() {
+    let directory = tempfile::tempdir().unwrap();
+    let root = directory.path();
+    let scope = root.join("nested");
+    fs::create_dir(&scope).unwrap();
+    fs::write(scope.join("tracked.ts"), "before\n").unwrap();
+    initialize_repository(root);
+    fs::write(scope.join("ignored.ts"), "ignore this\n").unwrap();
+    let visible = scope.join("visible.ts");
+    fs::write(&visible, "include this\n").unwrap();
+    fs::write(root.join("comparison-excludes"), "ignored.ts\n").unwrap();
+    fs::write(root.join("comparison-attributes"), "*.ts text eol=lf\n").unwrap();
+    fs::create_dir(root.join("comparison-directory")).unwrap();
+    fs::write(
+        root.join("comparison-oversized"),
+        vec![b' '; 1024 * 1024 + 1],
+    )
+    .unwrap();
+
+    let set = |key: &str, value: &str| {
+        assert!(fixture_git()
+            .current_dir(root)
+            .args(["config", key, value])
+            .status()
+            .unwrap()
+            .success());
+    };
+    set("core.excludesfile", "comparison-excludes");
+    set("core.attributesfile", "comparison-attributes");
+    assert_eq!(
+        git_changed_files(&scope, "HEAD").unwrap(),
+        BTreeSet::from([visible.clone()])
+    );
+
+    for absent in ["", "comparison-missing"] {
+        set("core.excludesfile", absent);
+        assert_eq!(
+            git_changed_files(&scope, "HEAD").unwrap(),
+            BTreeSet::from([scope.join("ignored.ts"), visible.clone()])
+        );
+    }
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+
+        let literal = ":(optional)comparison-literal";
+        fs::write(root.join(literal), "ignored.ts\n").unwrap();
+        set("core.excludesfile", &format!(":(optional){literal}"));
+        assert_eq!(
+            git_changed_files(&scope, "HEAD").unwrap(),
+            BTreeSet::from([visible])
+        );
+
+        let inaccessible = root.join("comparison-inaccessible");
+        fs::write(&inaccessible, "# normal settings\n").unwrap();
+        fs::set_permissions(&inaccessible, fs::Permissions::from_mode(0o000)).unwrap();
+        if File::open(&inaccessible).is_err() {
+            set("core.excludesfile", "comparison-inaccessible");
+            let error = git_changed_files(&scope, "HEAD").unwrap_err();
+            assert!(error
+                .to_string()
+                .contains("failed to open Git setting core.excludesfile"));
+        }
+    }
+
+    set("core.excludesfile", "comparison-excludes");
+    for (key, original) in [
+        ("core.excludesfile", "comparison-excludes"),
+        ("core.attributesfile", "comparison-attributes"),
+    ] {
+        for path in ["comparison-oversized", "comparison-directory"] {
+            set(key, path);
+            let error = git_changed_files(&scope, "HEAD").unwrap_err();
+            let message = format!("{error:#}");
+            assert!(
+                message.contains(key) && message.contains("regular file of at most 1 MiB"),
+                "{message}"
+            );
+        }
+        set(key, original);
+    }
+}
+
+/// Checks local and worktree Git settings stay within the comparison checkout.
+#[test]
+fn changed_files_confine_repository_owned_git_inputs() {
+    let directory = tempfile::tempdir().unwrap();
+    let root = directory.path().join("checkout");
+    let external = directory.path().join("operator-settings");
+    fs::create_dir(&root).unwrap();
+    fs::write(root.join("tracked.ts"), "before\n").unwrap();
+    initialize_repository(&root);
+    fs::write(root.join("visible.ts"), "ordinary work\n").unwrap();
+    fs::write(root.join("repository-settings"), "# empty settings\n").unwrap();
+    fs::write(&external, "# ordinary operator settings\n").unwrap();
+
+    let set = |scope: &str, key: &str, path: &str| {
+        assert!(fixture_git()
+            .current_dir(&root)
+            .args(["config", scope, key, path])
+            .status()
+            .unwrap()
+            .success());
+    };
+    set("--local", "extensions.worktreeConfig", "true");
+    for (scope, key) in [
+        ("--local", "core.excludesfile"),
+        ("--worktree", "core.attributesfile"),
+    ] {
+        let contained = root.join("repository-settings");
+        for path in ["repository-settings", contained.to_str().unwrap()] {
+            set(scope, key, path);
+            let files = git_changed_files(&root, "HEAD").unwrap();
+            assert!(files.iter().any(|file| file.ends_with("visible.ts")));
+        }
+
+        for path in [
+            external.to_str().unwrap(),
+            "../operator-settings",
+            ":(optional)../absent-settings",
+        ] {
+            set(scope, key, path);
+            let error = git_changed_files(&root, "HEAD").unwrap_err();
+            let message = format!("{error:#}");
+            assert!(
+                message.contains(key) && message.contains("outside the checkout"),
+                "{message}"
+            );
+        }
+
+        set(scope, key, ":(optional)absent-settings");
+        let files = git_changed_files(&root, "HEAD").unwrap();
+        assert!(files.iter().any(|file| file.ends_with("visible.ts")));
+
+        #[cfg(unix)]
+        {
+            let alias = root.join(format!("{key}-alias"));
+            std::os::unix::fs::symlink(&external, &alias).unwrap();
+            set(scope, key, alias.to_str().unwrap());
+            let error = git_changed_files(&root, "HEAD").unwrap_err();
+            assert!(format!("{error:#}").contains("outside the checkout"));
+        }
+
+        set(scope, key, "repository-settings");
+    }
+
+    #[cfg(unix)]
+    {
+        let key = "core.excludesfile";
+        let invalid_parent = root.join("repository-settings").join("child");
+        let error = verify_repository_git_path(&root, &invalid_parent, key).unwrap_err();
+        assert!(error.to_string().contains("cannot verify Git setting"));
+
+        let error = verify_repository_git_path(&root, Path::new(""), key).unwrap_err();
+        assert!(error
+            .to_string()
+            .contains("cannot verify the path for Git setting"));
+    }
+}
+
+/// Checks Windows filesystem path admission lexically without opening the supplied paths.
+#[cfg(windows)]
+#[test]
+fn changed_files_configured_input_requires_a_windows_filesystem_path() {
+    let root = Path::new(r"C:\fixture");
+    for path in [
+        r"rules\attributes.txt",
+        r"C:\fixture\rules.txt",
+        r"\\?\C:\fixture\rules.txt",
+        r"\\fixture.invalid\files\rules.txt",
+        r"\\?\UNC\fixture.invalid\files\rules.txt",
+        "auxiliary.txt",
+        "com10.txt",
+    ] {
+        assert!(
+            configured_git_input_source(root, Path::new(path)).is_ok(),
+            "{path}"
+        );
+    }
+    for path in [
+        r"\\.\fixture",
+        r"\\fixture.invalid\pipe\fixture",
+        r"\\?\UNC\fixture.invalid\PIPE\fixture",
+        "Aux.txt",
+        "LPT².txt",
+        r"C:rules.txt",
+    ] {
+        assert!(
+            configured_git_input_source(root, Path::new(path)).is_err(),
+            "{path}"
+        );
+    }
 }
 
 /// Checks the private Git command retains the checkout's long-path setting.

@@ -82,7 +82,9 @@ For files with custom clean or smudge filters, comparison may include paths whos
 
 Changed-file comparison selects the current path of a renamed file. Partial clones can compare paths with the base commit and its trees available locally.
 
-Changed-file comparison requires repository metadata under `info/` to be regular files of at most 1 MiB. Put `safe.directory` entries in Git's user or system configuration.
+Changed-file comparison requires regular Git index files and accepts up to 64 MiB per index file. It accepts up to 256 KiB of selected Git worktree settings.
+
+Changed-file comparison requires repository metadata under `info/` and explicitly configured `core.excludesfile` and `core.attributesfile` inputs to be regular files of at most 1 MiB when present. Git settings in the repository or worktree must select files inside the checkout. User and system Git settings may select external files. Put `safe.directory` entries in Git's user or system configuration.
 
 An empty changed-file set warns. Changed-file filtering does not relax corpus validation: operational read, extraction and feature-parse errors remain fatal even in unchanged files. JS/TS and Ruby definition parse failures and unresolved static registrations remain incomplete warnings by default. Use `--fail-on-unparseable` for definition parse failures or `--fail-on-incomplete` for all incompleteness.
 

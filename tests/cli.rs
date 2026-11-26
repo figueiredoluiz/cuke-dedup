@@ -5071,7 +5071,7 @@ case "$FIXTURE_GIT_CASE:$*" in
     format:*" hash-object --stdin"|format:*" --show-object-format") printf 'unknown\n'; exit 0 ;;
     format-length:*" hash-object --stdin") printf 'abc\n'; exit 0 ;;
     legacy:*" --path-format="*|legacy:*" --show-object-format") exit 129 ;;
-    settings:*" config --null --get-regexp "*) exit 2 ;;
+    settings:*" config --null --show-scope --get-regexp "*) exit 2 ;;
     scope:*" check-ignore --quiet -- "*) exit 2 ;;
     scope-stderr:*" check-ignore --quiet -- "*) printf 'fatal: bad\n::warning::owned\033[31m\n' >&2; exit 128 ;;
     paths:*" ls-files --others "*) printf '../outside.ts\000'; exit 0 ;;
@@ -5280,11 +5280,16 @@ fn changed_since_preserves_inherited_line_endings() {
         (".gitconfig", "[core]\n  autocrlf = true\n"),
         ("git/attributes", "*.ts text eol=crlf\n"),
         ("git/project-attributes", "*.ts text eol=crlf\n"),
+        ("git/operator-attributes", "*.ts text eol=crlf\n"),
     ] {
         let repository = tempfile::tempdir().unwrap();
         let config = tempfile::tempdir().unwrap();
         let root = repository.path();
-        write(config.path(), filename, configuration);
+        if filename == "git/project-attributes" {
+            write(root, filename, configuration);
+        } else {
+            write(config.path(), filename, configuration);
+        }
         if filename == ".gitconfig" {
             write(config.path(), "git/config", "[core]\n  autocrlf = false\n");
         }
@@ -5296,12 +5301,17 @@ fn changed_since_preserves_inherited_line_endings() {
         );
         let git = || fixture_git_with_config(config.path());
         init_repository_with(root, git);
-        if filename == "git/project-attributes" {
+        let explicit_attributes = match filename {
+            "git/project-attributes" => Some(("--local", Path::new(filename).to_path_buf())),
+            "git/operator-attributes" => Some(("--global", config.path().join(filename))),
+            _ => None,
+        };
+        if let Some((scope, attributes)) = explicit_attributes {
             write(config.path(), "git/attributes", "*.ts -text\n");
             assert!(git()
                 .current_dir(root)
-                .args(["config", "core.attributesFile"])
-                .arg(config.path().join(filename))
+                .args(["config", scope, "core.attributesFile"])
+                .arg(attributes)
                 .status()
                 .unwrap()
                 .success());
@@ -5470,32 +5480,42 @@ fn changed_since_rejects_a_gitignored_analysis_root() {
     write(config.path(), "git/ignore", "operator-ignored/\n");
     init_repository_with(root, || fixture_git_with_config(config.path()));
 
-    for (scope, expected_code) in [
-        ("repo-ignored", 2),
-        ("operator-ignored", 2),
-        ("included", 1),
-        #[cfg(unix)]
-        (":(glob)included", 1),
-        #[cfg(unix)]
-        (":(glob)ignored", 2),
-    ] {
-        write(
-            root,
-            &format!("{scope}/steps.ts"),
-            "Given('shared step', () => first());\nGiven('shared step', () => second());\n",
-        );
-        let result = Command::cargo_bin("cuke-dedup")
-            .unwrap()
-            .current_dir(root)
-            .env("HOME", config.path())
-            .env("XDG_CONFIG_HOME", config.path())
-            .args([scope, "--changed-since", "HEAD"])
-            .assert()
-            .code(expected_code);
-        if expected_code == 2 {
-            result.stderr(predicate::str::contains("ignored by Git"));
-        } else {
-            result.stdout(predicate::str::contains("duplicate-matcher"));
+    for optional in [false, true] {
+        if optional {
+            let result = fixture_git_with_config(config.path())
+                .current_dir(root)
+                .args(["config", "--local", "core.excludesFile", ":(optional)"])
+                .output()
+                .unwrap();
+            assert!(result.status.success(), "{:?}", result.stderr);
+        }
+        for (scope, expected_code) in [
+            ("repo-ignored", 2),
+            ("operator-ignored", 2),
+            ("included", 1),
+            #[cfg(unix)]
+            (":(glob)included", 1),
+            #[cfg(unix)]
+            (":(glob)ignored", 2),
+        ] {
+            write(
+                root,
+                &format!("{scope}/steps.ts"),
+                "Given('shared step', () => first());\nGiven('shared step', () => second());\n",
+            );
+            let result = Command::cargo_bin("cuke-dedup")
+                .unwrap()
+                .current_dir(root)
+                .env("HOME", config.path())
+                .env("XDG_CONFIG_HOME", config.path())
+                .args([scope, "--changed-since", "HEAD"])
+                .assert()
+                .code(expected_code);
+            if expected_code == 2 {
+                result.stderr(predicate::str::contains("ignored by Git"));
+            } else {
+                result.stdout(predicate::str::contains("duplicate-matcher"));
+            }
         }
     }
 }
