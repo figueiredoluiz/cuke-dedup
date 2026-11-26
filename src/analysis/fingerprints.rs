@@ -40,6 +40,8 @@ struct HandlerRecord {
     behavior: String,
     comparable: bool,
     trivial: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    available: Option<bool>,
 }
 
 /// Root-relative, `/`-separated path of a definition, shared with the pair oracle so both join.
@@ -77,6 +79,7 @@ fn record<'a>(definition: &'a StepDefinition, root: &Path) -> impl Serialize + '
             behavior: handler.behavior_digest(),
             comparable: handler.comparable,
             trivial: handler.trivial,
+            available: (!handler.has_representation()).then_some(false),
         },
     }
 }

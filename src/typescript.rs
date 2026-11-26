@@ -31,7 +31,9 @@ use self::registrations::{
 #[cfg(test)]
 use crate::model::bounded_source_snippet;
 use crate::model::{Framework, HandlerFingerprint, MatcherKind, SourceLocation, StepDefinition};
-use crate::resource_limits::MAX_REGEX_PATTERN_BYTES;
+use crate::resource_limits::{
+    WorkBudget, MAX_ECMASCRIPT_HANDLER_WORK_BYTES, MAX_REGEX_PATTERN_BYTES,
+};
 use crate::source_adapter::columns::ColumnIndex;
 use crate::source_adapter::suppression::InlineSuppressions;
 use crate::source_adapter::{
@@ -44,7 +46,7 @@ pub use crate::source_adapter::{
     Extraction, ExtractionDiagnostic, ExtractionDiagnosticLevel, SourceFile, SourceLanguage,
 };
 use anyhow::{Context, Result};
-use std::cell::OnceCell;
+use std::cell::{Cell, OnceCell};
 use std::collections::{BTreeMap, BTreeSet};
 use tree_sitter::{Node, Parser};
 
@@ -83,11 +85,23 @@ pub(crate) static TSX_ADAPTER: TreeSitterSourceAdapter = TreeSitterSourceAdapter
     language: TSX,
 };
 
-#[derive(Default)]
 pub(crate) struct TypeScriptExtractionSession {
     resolver: RegistrationResolver,
-    configured_registrations: std::collections::BTreeSet<String>,
-    configured_assertion_modules: std::collections::BTreeSet<String>,
+    configured_registrations: BTreeSet<String>,
+    configured_assertion_modules: BTreeSet<String>,
+    handler_work: WorkBudget,
+}
+
+impl Default for TypeScriptExtractionSession {
+    /// Starts fresh resolution and fingerprint allowances for one extraction session.
+    fn default() -> Self {
+        Self {
+            resolver: RegistrationResolver::default(),
+            configured_registrations: BTreeSet::new(),
+            configured_assertion_modules: BTreeSet::new(),
+            handler_work: WorkBudget::new(MAX_ECMASCRIPT_HANDLER_WORK_BYTES),
+        }
+    }
 }
 
 impl TypeScriptExtractionSession {
@@ -101,6 +115,7 @@ impl TypeScriptExtractionSession {
             resolver: RegistrationResolver::for_root(root),
             configured_registrations: registrations.iter().cloned().collect(),
             configured_assertion_modules: assertion_modules.iter().cloned().collect(),
+            ..Self::default()
         }
     }
 }
@@ -232,6 +247,8 @@ struct AdapterContext<'source, 'tree> {
     configured_assertion_modules: &'source BTreeSet<String>,
     max_regex_part_bytes: usize,
     handler_evidence: OnceCell<HandlerEvidence<'tree>>,
+    handler_work: &'source Cell<WorkBudget>,
+    handler_work_limit_reported: Cell<bool>,
 }
 
 impl AdapterContext<'_, '_> {
@@ -250,6 +267,36 @@ struct HandlerEvidence<'tree> {
 }
 
 impl<'tree> AdapterContext<'_, 'tree> {
+    /// Charges one handler before computing fingerprints and emits the first refusal for this file.
+    fn admit_handler_work(
+        &self,
+        call: Node<'tree>,
+        handler: Node<'tree>,
+        bound_arguments: Option<Node<'tree>>,
+        diagnostics: &mut Vec<ExtractionDiagnostic>,
+    ) -> bool {
+        let mut budget = self.handler_work.get();
+        let admitted = self.handler_evidence().module_scope.admit_handler_work(
+            handler,
+            bound_arguments,
+            self.source,
+            &mut budget,
+        );
+        self.handler_work.set(budget);
+        if !admitted && !self.handler_work_limit_reported.replace(true) {
+            diagnostics.push(ExtractionDiagnostic::with_kind(
+                ExtractionDiagnosticKind::Incomplete,
+                ExtractionDiagnosticLevel::Warning,
+                self.location(call),
+                format!(
+                    "step handler fingerprint work limit ({} source bytes) exceeded; handler comparisons are incomplete",
+                    budget.limit()
+                ),
+            ));
+        }
+        admitted
+    }
+
     /// Returns the file's handler evidence, building it on first use.
     fn handler_evidence(&self) -> &HandlerEvidence<'tree> {
         self.handler_evidence.get_or_init(|| {
@@ -384,6 +431,8 @@ fn extract_detailed_with_regex_limit(
         configured_assertion_modules: &session.configured_assertion_modules,
         max_regex_part_bytes,
         handler_evidence: OnceCell::new(),
+        handler_work: Cell::from_mut(&mut session.handler_work),
+        handler_work_limit_reported: Cell::new(false),
     };
     let mut definitions = Vec::new();
     let mut diagnostics = Vec::new();
@@ -810,12 +859,7 @@ fn extract_call<'tree>(
     }
     let comparable = resolved_handler.is_some();
     let handler = resolved_handler.unwrap_or(handler);
-    Some(step_definition(
-        call,
-        context,
-        diagnostics,
-        (callee, registration, registration_framework),
-        (matcher, matcher_kind, matcher_flags),
+    let fingerprint = if context.admit_handler_work(call, handler, bound_arguments, diagnostics) {
         fingerprint_handler(
             handler,
             bound_arguments,
@@ -823,7 +867,17 @@ fn extract_call<'tree>(
             comparable,
             &evidence.assertions,
             &evidence.module_scope,
-        ),
+        )
+    } else {
+        HandlerFingerprint::unavailable()
+    };
+    Some(step_definition(
+        call,
+        context,
+        diagnostics,
+        (callee, registration, registration_framework),
+        (matcher, matcher_kind, matcher_flags),
+        fingerprint,
     ))
 }
 
@@ -848,7 +902,13 @@ fn extract_decorator<'tree>(
         extract_matcher(matcher_node, context, diagnostics)?;
     let handler = decorated_method(call).and_then(|method| {
         let evidence = context.handler_evidence();
-        fingerprint_method_handler(method, source, &evidence.assertions, &evidence.module_scope)
+        fingerprint_method_handler(
+            method,
+            source,
+            &evidence.assertions,
+            &evidence.module_scope,
+            || context.admit_handler_work(call, method, None, diagnostics),
+        )
     });
     let Some(handler) = handler else {
         diagnostics.push(dropped_registration_diagnostic(context, call));

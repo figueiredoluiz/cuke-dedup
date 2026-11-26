@@ -234,6 +234,37 @@ test("a missing, miscounted, ambiguous or unmodeled pair file is rejected for ev
   }
 });
 
+/** Checks both refused and partly represented pairs against the fingerprint and pair contract. */
+test("unavailable fingerprints only support matcher relationships and excluded comparisons", () => {
+  const declined = { available: false, comparable: false };
+  const represented = { exact: "other", structural: "other", comparable: false };
+  const expected = absent({ compared: false, differs: MATCHER });
+  for (const other of [declined, represented, {}]) {
+    const records = [record(1, "one", declined), record(2, "two", other)];
+    const base = pair(...records, { candidateSources: ["matcherBlocking"], handlerSimilarity: null });
+    const valid = {
+      ...base,
+      relationships: {
+        ...base.relationships,
+        sameHandler: false,
+        sameHandlerStructure: false,
+        sameStructure: false,
+        sameDeferredAssertions: false,
+      },
+    };
+    checkIsolation(records, expected, { pairs: [valid] });
+    assert.throws(() => checkIsolation(records, absent({ compared: true, differs: MATCHER }), { pairs: [valid] }), /excluded/);
+    for (const axis of Object.keys(valid.relationships)) {
+      const falseClaim = { ...valid, relationships: { ...valid.relationships, [axis]: true } };
+      assert.throws(() => checkIsolation(records, expected, { pairs: [falseClaim] }), new RegExp(axis));
+    }
+    assert.throws(() => checkIsolation(records, expected, { pairs: [{ ...valid, handlerSimilarity: 0.9 }] }), /handlerSimilarity/);
+  }
+  for (const invalid of [{ available: false }, { available: "no", comparable: false }]) {
+    assert.throws(() => checkIsolation([record(1, "one", invalid), record(2, "two")], expected), /availability/);
+  }
+});
+
 /** Checks a key shared by several fingerprint records cannot be joined to one definition. */
 test("a pair is not joined to a key several definitions share", () => {
   const records = [...equalHandlers(), record(2, "three", {}, { definitionFingerprint: "other" })];

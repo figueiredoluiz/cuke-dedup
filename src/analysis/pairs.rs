@@ -131,6 +131,7 @@ pub(super) struct PairRelationships {
 struct ComparisonClasses {
     exact_matcher: Vec<usize>,
     normalized_matcher: Vec<usize>,
+    handler_available: Vec<bool>,
     alpha_handler: Vec<usize>,
     structural_handler: Vec<usize>,
     structure_and_behavior: Vec<usize>,
@@ -140,14 +141,17 @@ struct ComparisonClasses {
 impl ComparisonClasses {
     /// Compares the two definitions' class ids on each comparison axis.
     fn relationships(&self, left: usize, right: usize) -> PairRelationships {
+        let available = self.handler_available[left] && self.handler_available[right];
         PairRelationships {
             exact_matcher: self.exact_matcher[left] == self.exact_matcher[right],
             normalized_matcher: self.normalized_matcher[left] == self.normalized_matcher[right],
-            same_handler: self.alpha_handler[left] == self.alpha_handler[right],
-            same_handler_structure: self.structural_handler[left] == self.structural_handler[right],
-            same_structure: self.structure_and_behavior[left] == self.structure_and_behavior[right],
-            same_deferred_assertions: self.deferred_assertions[left]
-                == self.deferred_assertions[right],
+            same_handler: available && self.alpha_handler[left] == self.alpha_handler[right],
+            same_handler_structure: available
+                && self.structural_handler[left] == self.structural_handler[right],
+            same_structure: available
+                && self.structure_and_behavior[left] == self.structure_and_behavior[right],
+            same_deferred_assertions: available
+                && self.deferred_assertions[left] == self.deferred_assertions[right],
         }
     }
 }
@@ -605,12 +609,16 @@ fn comparison_classes(definitions: &[StepDefinition]) -> ComparisonClasses {
     let mut classes = ComparisonClasses {
         exact_matcher: Vec::with_capacity(definitions.len()),
         normalized_matcher: Vec::with_capacity(definitions.len()),
+        handler_available: Vec::with_capacity(definitions.len()),
         alpha_handler: Vec::with_capacity(definitions.len()),
         structural_handler: Vec::with_capacity(definitions.len()),
         structure_and_behavior: Vec::with_capacity(definitions.len()),
         deferred_assertions: Vec::with_capacity(definitions.len()),
     };
     for definition in definitions {
+        classes
+            .handler_available
+            .push(definition.handler.has_representation());
         classes.deferred_assertions.push(intern_class(
             &mut deferred_assertions,
             definition
@@ -1755,7 +1763,9 @@ fn push_pair_finding(
             related: vec![finding.right.location.clone()],
             evidence: FindingEvidence {
                 matcher_similarity: Some(round_score(finding.matcher_similarity)),
-                handler_similarity: Some(round_score(finding.handler_similarity)),
+                handler_similarity: (finding.left.handler.has_representation()
+                    && finding.right.handler.has_representation())
+                .then(|| round_score(finding.handler_similarity)),
                 matcher_difference: finding.matcher_difference.into_owned(),
                 handler_evidence: finding.handler_evidence.into_owned(),
                 comparison: Some(definition_comparison(finding.left, finding.right)),

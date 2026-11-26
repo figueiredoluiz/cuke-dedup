@@ -6,6 +6,7 @@ use crate::model::{
     bounded_source_snippet, stable_fingerprint, BehaviorEvent, ControlFlowOperation, EffectStream,
     HandlerFingerprint, HandlerSemantics, RepresentationEncoding,
 };
+use crate::resource_limits::WorkBudget;
 use crate::stub_vocabulary::is_stub_label;
 use std::borrow::Cow;
 use std::cell::OnceCell;
@@ -215,11 +216,15 @@ pub(super) fn fingerprint_method_handler<'tree>(
     source: &[u8],
     assertions: &AssertionBindings,
     module: &ModuleScope<'tree>,
+    admit_work: impl FnOnce() -> bool,
 ) -> Option<HandlerFingerprint> {
     debug_assert_eq!(method.kind(), "method_definition");
     let name = method.child_by_field_name("name")?;
     let parameters = method.child_by_field_name("parameters")?;
     let body = method.child_by_field_name("body")?;
+    if !admit_work() {
+        return Some(HandlerFingerprint::unavailable());
+    }
     let mut identifiers = IdentifierNames::default();
     collect_parameter_bindings(parameters, source, &mut identifiers);
     collect_declared_locals(body, source, &mut identifiers);
@@ -753,6 +758,8 @@ struct ModuleLiterals<'tree> {
     declarations: Vec<Node<'tree>>,
     /// `ModuleScope::shadows` without the cached ones.
     shadows: Vec<Node<'tree>>,
+    /// Source bytes of declarations that the fingerprint revisits for every handler.
+    repeated_bytes: usize,
 }
 
 impl<'tree> ModuleScope<'tree> {
@@ -798,6 +805,7 @@ impl<'tree> ModuleScope<'tree> {
             bindings: BTreeMap::new(),
             declarations: scope.declarations.clone(),
             shadows: scope.shadows.clone(),
+            repeated_bytes: declaration_bytes(&scope.declarations),
         });
         scope
     }
@@ -811,6 +819,31 @@ impl<'tree> ModuleScope<'tree> {
             literals.declarations.len(),
             literals.shadows.len(),
         )
+    }
+
+    /// Charges the handler, bound arguments and repeated enclosing-scope work before traversal.
+    pub(super) fn admit_handler_work(
+        &self,
+        handler: Node<'tree>,
+        bound_arguments: Option<Node<'tree>>,
+        source: &[u8],
+        budget: &mut WorkBudget,
+    ) -> bool {
+        let handler_bytes = handler.byte_range().len().max(1);
+        let argument_bytes = bound_arguments.map_or(0, |node| node.byte_range().len());
+        if budget.charge(handler_bytes.saturating_add(argument_bytes)) {
+            return false;
+        }
+        let mut ancestor = handler.parent();
+        while let Some(node) = ancestor.filter(|node| *node != self.root) {
+            // Non-module shadow scans inspect direct declarations and captured bindings. The
+            // enclosing span bounds the source they can visit without another discovery pass.
+            if budget.charge(node.byte_range().len()) {
+                return false;
+            }
+            ancestor = node.parent();
+        }
+        !budget.charge(self.literals(source).repeated_bytes)
     }
 
     /// The file's cached constants; `source` is the text `root` was parsed from.
@@ -867,15 +900,27 @@ impl<'tree> ModuleScope<'tree> {
             }
             let uncached = |declarations: &[Node<'tree>]| {
                 let walked = declarations.iter().copied();
-                walked.filter(|d| !cached.contains(&d.id())).collect()
+                walked
+                    .filter(|d| !cached.contains(&d.id()))
+                    .collect::<Vec<_>>()
             };
+            let declarations = uncached(&self.declarations);
             ModuleLiterals {
                 bindings,
-                declarations: uncached(&self.declarations),
+                repeated_bytes: declaration_bytes(&declarations),
+                declarations,
                 shadows: uncached(&self.shadows),
             }
         })
     }
+}
+
+/// Counts source bytes of declarations retained for per-handler walks.
+fn declaration_bytes(declarations: &[Node<'_>]) -> usize {
+    declarations
+        .iter()
+        .map(|node| node.byte_range().len())
+        .fold(0, usize::saturating_add)
 }
 
 /// Each `(declarator, name)` of a `const` declaration that only binds identifiers to literals or

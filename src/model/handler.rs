@@ -44,6 +44,27 @@ pub(crate) struct BehaviorIdentity<'a> {
 }
 
 impl HandlerFingerprint {
+    /// Keeps a definition usable by matcher rules when its handler fingerprint was refused.
+    pub(crate) fn unavailable() -> Self {
+        Self {
+            exact: String::new(),
+            normalized: String::new(),
+            alpha_normalized: String::new(),
+            structural: String::new(),
+            behavior_signature: Vec::new(),
+            source_snippet: String::new(),
+            comparable: false,
+            trivial: false,
+            effect_stream: EffectStream::default(),
+            capture_scope: None,
+        }
+    }
+
+    /// Whether a representation exists, including handlers that could only be partially modeled.
+    pub(crate) fn has_representation(&self) -> bool {
+        self.comparable || !self.exact.is_empty()
+    }
+
     /// The key under which two handlers count as behaving identically.
     pub(crate) fn behavior_identity(&self) -> BehaviorIdentity<'_> {
         BehaviorIdentity {
