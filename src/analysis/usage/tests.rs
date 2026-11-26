@@ -482,7 +482,7 @@ fn overlap_fixture(source: &str) -> OverlapFixture {
 fn cucumber_expression_expansion_stops_at_the_regex_pattern_limit() {
     let matcher = ".".repeat(600_000);
     assert!(matches!(
-        cucumber_regex_expression(&matcher),
+        cucumber_regex_expression(&matcher, MAX_REGEX_PATTERN_BYTES),
         CucumberRegexExpression::ResourceLimit
     ));
 }
@@ -1179,22 +1179,124 @@ fn fallback_expression_handles_optional_alternative_and_declared_parameters() {
     let exact = fallback_cucumber_expression_regex(
         "I eat/eats {int} cucumber(s) with {colour}",
         &parameters,
-    );
+        MAX_REGEX_PATTERN_BYTES,
+    )
+    .unwrap();
     assert!(exact.exact);
     let regex = Regex::new(&exact.expression).unwrap();
     assert!(regex.is_match("I eat 2 cucumbers with red"));
     assert!(regex.is_match("I eats -2 cucumber with green"));
 
-    let approximate = fallback_cucumber_expression_regex("a {custom}", &BTreeMap::new());
+    let approximate =
+        fallback_cucumber_expression_regex("a {custom}", &BTreeMap::new(), MAX_REGEX_PATTERN_BYTES)
+            .unwrap();
     assert!(!approximate.exact);
     assert!(Regex::new(&approximate.expression)
         .unwrap()
         .is_match("a anything"));
-    assert_eq!(
-        fallback_cucumber_token_regex("open(unclosed"),
-        r"open\(unclosed"
-    );
-    assert!(fallback_cucumber_literal_regex("two  spaces").contains("two"));
+}
+
+/// Checks exact and approximate fallback outcomes at each output allowance boundary.
+#[test]
+fn fallback_expansion_preserves_matcher_semantics_at_the_byte_limit() {
+    let parameters = BTreeMap::from([("colour".to_owned(), "red|green".to_owned())]);
+    for (matcher, expected, accepts, rejects, authoritative) in [
+        (
+            "é.+ a/b(s) {colour}",
+            r"^é\.\+ (?:a|b(?:s)?) (?:red|green)$",
+            "é.+ bs green",
+            "é.+ as green",
+            true,
+        ),
+        (
+            "a//b  {unknown}",
+            r"^(?:a||b)  .+$",
+            "  arbitrary",
+            "b arbitrary",
+            false,
+        ),
+        (
+            "open(unclosed {colour}",
+            r"^open\(unclosed (?:red|green)$",
+            "open(unclosed red",
+            "openunclosed red",
+            true,
+        ),
+        (
+            r"raw\name {} {colour}",
+            r"^raw\\name \{\} (?:red|green)$",
+            r"raw\name {} green",
+            "rawname {} green",
+            true,
+        ),
+        (
+            "{float} {colour}",
+            r"^-?(?:\d+\.)?\d+ (?:red|green)$",
+            "-12.75 green",
+            "12. green",
+            true,
+        ),
+        (
+            "{word} {colour}",
+            r"^\S+ (?:red|green)$",
+            "navy red",
+            "dark navy red",
+            true,
+        ),
+        (
+            "{string} {colour}",
+            r#"^(?:"[^"]*"|'[^']*') (?:red|green)$"#,
+            "'navy blue' green",
+            "navy blue green",
+            true,
+        ),
+        ("", "^$", "", "text", true),
+    ] {
+        for limit in [expected.len(), expected.len() + 1] {
+            let fallback = fallback_cucumber_expression_regex(matcher, &parameters, limit).unwrap();
+            assert_eq!(fallback.expression, expected, "{matcher:?}");
+            assert_eq!(fallback.exact, authoritative, "{matcher:?}");
+            let regex = Regex::new(&fallback.expression).unwrap();
+            assert!(regex.is_match(accepts), "{matcher:?} with {accepts:?}");
+            assert!(!regex.is_match(rejects), "{matcher:?} with {rejects:?}");
+        }
+        assert!(
+            fallback_cucumber_expression_regex(matcher, &parameters, expected.len() - 1).is_none(),
+            "{matcher:?} exceeded its finite allowance"
+        );
+    }
+}
+
+/// Checks a refused fallback supplies the resource diagnostic and no authoritative matcher.
+#[test]
+fn fallback_matcher_refusal_keeps_approximate_and_authoritative_controls() {
+    let parameters = BTreeMap::from([("colour".to_owned(), "red|green".to_owned())]);
+    let mut definition = definitions("Given('value {colour}', () => work());").remove(0);
+    let expanded = "^value (?:red|green)$";
+    let limit = expanded.len();
+    let (refused, message) = prepare_cucumber_matcher(&definition, &parameters, limit - 1);
+    assert!(refused.expression.is_none());
+    assert!(!refused.authoritative);
+    assert!(message.unwrap().contains("regex resource limit"));
+
+    let (known, message) = prepare_cucumber_matcher(&definition, &parameters, limit);
+    assert_eq!(known.expression.as_deref(), Some(expanded));
+    assert!(known.authoritative);
+    assert!(message.is_none());
+
+    definition.matcher = "value {unknown}".to_owned();
+    let (unknown, message) = prepare_cucumber_matcher(&definition, &parameters, limit);
+    assert_eq!(unknown.expression.as_deref(), Some("^value .+$"));
+    assert!(!unknown.authoritative);
+    assert!(message.is_none());
+
+    definition.matcher = "value red".to_owned();
+    let (builtin, message) = prepare_cucumber_matcher(&definition, &parameters, limit);
+    assert!(Regex::new(&builtin.expression.unwrap())
+        .unwrap()
+        .is_match("value red"));
+    assert!(builtin.authoritative);
+    assert!(message.is_none());
 }
 
 /// Checks oversized regex and Cucumber matchers report resource limits while invalid regex syntax has no resource diagnostic.

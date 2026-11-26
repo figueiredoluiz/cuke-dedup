@@ -1679,6 +1679,20 @@
           "behaviorClass": "shared-engine-invariant"
         },
         {
+          "name": "fallback_expansion_preserves_matcher_semantics_at_the_byte_limit",
+          "requiredStatus": "engine-invariant",
+          "stage": "regex-compiler",
+          "rationale": "Adapter-independent stage `regex-compiler`: fallback source preserves escaped Unicode, alternatives, optional text and declared or unknown parameters at exact byte boundaries.",
+          "behaviorClass": "shared-engine-invariant"
+        },
+        {
+          "name": "fallback_matcher_refusal_keeps_approximate_and_authoritative_controls",
+          "requiredStatus": "engine-invariant",
+          "stage": "regex-compiler",
+          "rationale": "Adapter-independent stage `regex-compiler`: a refused fallback supplies a diagnostic instead of compiled source or witness authority. Supported exact and approximate controls retain their matching.",
+          "behaviorClass": "shared-engine-invariant"
+        },
+        {
           "name": "matcher_compilation_reports_limits_but_not_unsupported_syntax",
           "requiredStatus": "rust-evidence",
           "evidenceTest": {
