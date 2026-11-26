@@ -2063,6 +2063,12 @@ fn collect_behavior<'tree>(
                         }
                         continue;
                     }
+                    // Compound callees are read again to build this event. Nested calls
+                    // each own their representation, so charge every such traversal.
+                    if function.kind() != "identifier" && budget.charge(function.byte_range().len())
+                    {
+                        return false;
+                    }
                     output.push(call_behavior_event(function, source, declared));
                 }
             }
@@ -2320,37 +2326,41 @@ fn call_behavior_event(
     ))
 }
 
-/// Resolves a supported receiver chain to a canonical name, returning `None` for unsupported expressions.
+/// Assembles a canonical static receiver in one pass, or returns None for unrelated syntax.
 fn static_call_receiver(
-    node: Node<'_>,
+    mut node: Node<'_>,
     source: &[u8],
     declared: &BTreeMap<String, String>,
 ) -> Option<String> {
-    match node.kind() {
-        "identifier" => {
-            let name = node_text(node, source);
-            Some(declared.get(name).map_or(name, String::as_str).to_owned())
-        }
-        "this" | "super" => Some(node_text(node, source).to_owned()),
-        "parenthesized_expression" | "await_expression" => {
-            static_call_receiver(node.named_child(0)?, source, declared)
-        }
-        "member_expression" | "subscript_expression" => {
-            let (object, property) = assertion_property(node, source)?;
-            let object = static_call_receiver(object, source, declared)?;
-            Some(format!("{object}.{}", encode_event_component(property)))
-        }
-        "call_expression" => {
-            let function = node.child_by_field_name("function")?;
-            if let Some((object, _)) = assertion_property(function, source) {
-                static_call_receiver(object, source, declared)
-            } else if function.kind() == "identifier" {
-                let name = node_text(function, source);
-                Some(declared.get(name).map_or(name, String::as_str).to_owned())
-            } else {
-                None
+    let mut properties = Vec::new();
+    let base = loop {
+        node = match node.kind() {
+            "identifier" => {
+                let name = node_text(node, source);
+                break declared.get(name).map_or(name, String::as_str);
             }
-        }
-        _ => None,
+            "this" | "super" => break node_text(node, source),
+            "parenthesized_expression" | "await_expression" => node.named_child(0)?,
+            "member_expression" | "subscript_expression" => {
+                let (object, property) = assertion_property(node, source)?;
+                properties.push(property);
+                object
+            }
+            "call_expression" => {
+                let function = node.child_by_field_name("function")?;
+                match assertion_property(function, source) {
+                    Some((object, _)) => object,
+                    None if function.kind() == "identifier" => function,
+                    _ => return None, // fail-closed: the caller uses structural syntax for unknown receivers.
+                }
+            }
+            _ => return None, // fail-closed: compound syntax stays in the existing structural fallback.
+        };
+    };
+    let mut receiver = base.to_owned();
+    for property in properties.into_iter().rev() {
+        receiver.push('.');
+        receiver.push_str(&encode_event_component(property));
     }
+    Some(receiver)
 }

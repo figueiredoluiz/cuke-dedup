@@ -2533,9 +2533,9 @@ fn handler_fingerprint_work_preserves_matcher_findings_after_refusal() {
     }
 }
 
-/// Checks that repeated helper calls share the ordinary and decorated handler allowances.
+/// Checks that secondary behavior walks share the handler fingerprint allowance.
 #[test]
-fn handler_fingerprint_work_charges_helper_expansions() {
+fn handler_fingerprint_work_charges_repeated_analysis() {
     const HELPER: &str = "function saveEntry() { writeRecord(); }";
     let statements = format!("{HELPER} saveEntry(); saveEntry();");
     let handler = format!("function updateReport() {{ {statements} }}");
@@ -2546,6 +2546,13 @@ fn handler_fingerprint_work_charges_helper_expansions() {
     let decorated = format!(
         "import {{ Given }} from 'playwright-bdd/decorators';\nclass Steps {{ @Given('report updated') updateReport() {{ {statements} }} }}"
     );
+
+    let nested_callee = "composeReport()";
+    let nested_handler = format!("function writeReport() {{ {nested_callee}(); }}");
+    let nested = format!("{nested_handler}\nGiven('report updated', writeReport);");
+    let member_callee = "reports.audit.save";
+    let member_handler = format!("function writeReport() {{ {member_callee}(); }}");
+    let member = format!("{member_handler}\nGiven('report updated', writeReport);");
 
     // The method, class body and class declaration are the existing initial charge.
     let mut parser = Parser::new();
@@ -2558,21 +2565,22 @@ fn handler_fingerprint_work_charges_helper_expansions() {
         .named_children(&mut cursor)
         .find(|node| node.kind() == "method_definition")
         .unwrap();
-    let decorated_charge = [class, class_body, method]
+    let decorated_charge: usize = [class, class_body, method]
         .map(|node| node.byte_range().len())
         .iter()
         .sum();
 
     let directory = tempfile::tempdir().unwrap();
     let config = crate::config::Config::load(directory.path(), Default::default()).unwrap();
-    for (case, adapter, language, suffix, source, initial_charge) in [
+    let helper_charge = HELPER.len() * 2;
+    for (case, adapter, language, suffix, source, charge) in [
         (
             "ordinary",
             &JAVASCRIPT_ADAPTER,
             JAVASCRIPT,
             "js",
             ordinary.as_str(),
-            handler.len(),
+            handler.len() + helper_charge,
         ),
         (
             "bound arguments",
@@ -2580,7 +2588,7 @@ fn handler_fingerprint_work_charges_helper_expansions() {
             JAVASCRIPT,
             "js",
             bound.as_str(),
-            bound_handler.len() + arguments.len(),
+            bound_handler.len() + arguments.len() + helper_charge,
         ),
         (
             "decorated",
@@ -2588,10 +2596,25 @@ fn handler_fingerprint_work_charges_helper_expansions() {
             TYPESCRIPT,
             "ts",
             decorated.as_str(),
-            decorated_charge,
+            decorated_charge + helper_charge,
+        ),
+        (
+            "nested callee",
+            &JAVASCRIPT_ADAPTER,
+            JAVASCRIPT,
+            "js",
+            nested.as_str(),
+            nested_handler.len() + nested_callee.len(),
+        ),
+        (
+            "static member callee",
+            &JAVASCRIPT_ADAPTER,
+            JAVASCRIPT,
+            "js",
+            member.as_str(),
+            member_handler.len() + member_callee.len(),
         ),
     ] {
-        let charge = initial_charge + HELPER.len() * 2;
         for (limit, both_fit) in [(charge * 2, true), (charge * 2 - 1, false)] {
             let mut session = handler_work_session(directory.path(), limit);
             let mut extract = |name| {
