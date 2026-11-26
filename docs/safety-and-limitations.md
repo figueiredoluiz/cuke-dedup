@@ -90,7 +90,7 @@ from metadata before any file is read. Exceeding any primary discovery limit sto
 exit code 2 and writes no report; exclude generated or vendored directories or narrow the
 `features` and `definitions` globs.
 
-JS/TS handler fingerprinting charges each registration for its handler syntax, bound arguments and repeated enclosing declarations. The allowance is shared across files in the extraction session. When the allowance runs out, later definitions retain their matchers and report incomplete handler comparisons.
+JS/TS handler fingerprinting charges each registration for its handler syntax, bound arguments, repeated enclosing declarations, and each local helper examined again. The allowance is shared across files in the extraction session. When the allowance runs out, later definitions retain their matchers and report incomplete handler comparisons.
 
 Changed-file mode counts both Git listings together, including repeated names and the full retained paths. Exceeding either limit stops the command with exit code 2 before reporting.
 

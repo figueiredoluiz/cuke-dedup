@@ -5330,6 +5330,12 @@
           "behaviorClass": "language-specific-api"
         },
         {
+          "name": "handler_fingerprint_work_charges_helper_expansions",
+          "requiredStatus": "language-inapplicable",
+          "rationale": "JS/TS-only: Repeated local helper analysis shares the extractor’s fingerprint allowance across handler bodies, bound arguments, and decorated methods. Semantic residue: ruby_repeated_large_named_bodies_report_bounded_proof_exhaustion verifies the Ruby proof limit and incomplete outcome.",
+          "behaviorClass": "language-specific-api"
+        },
+        {
           "name": "handler_fingerprint_work_counts_bound_arguments_and_uncached_declarations",
           "requiredStatus": "language-inapplicable",
           "rationale": "JS/TS-only: Bound argument syntax and uncached ECMAScript module declarations contribute to the TypeScript fingerprint allowance. Semantic residue: none for these binding forms.",

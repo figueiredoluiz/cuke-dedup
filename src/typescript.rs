@@ -267,23 +267,20 @@ struct HandlerEvidence<'tree> {
 }
 
 impl<'tree> AdapterContext<'_, 'tree> {
-    /// Charges one handler before computing fingerprints and emits the first refusal for this file.
-    fn admit_handler_work(
+    /// Shares the session allowance with one fingerprint and reports its first refusal in this file.
+    fn fingerprint_with_work(
         &self,
         call: Node<'tree>,
-        handler: Node<'tree>,
-        bound_arguments: Option<Node<'tree>>,
         diagnostics: &mut Vec<ExtractionDiagnostic>,
-    ) -> bool {
+        build: impl FnOnce(&mut WorkBudget) -> Option<HandlerFingerprint>,
+    ) -> Option<HandlerFingerprint> {
         let mut budget = self.handler_work.get();
-        let admitted = self.handler_evidence().module_scope.admit_handler_work(
-            handler,
-            bound_arguments,
-            self.source,
-            &mut budget,
-        );
+        let fingerprint = build(&mut budget);
         self.handler_work.set(budget);
-        if !admitted && !self.handler_work_limit_reported.replace(true) {
+        if fingerprint.is_some()
+            && !budget.fits(0)
+            && !self.handler_work_limit_reported.replace(true)
+        {
             diagnostics.push(ExtractionDiagnostic::with_kind(
                 ExtractionDiagnosticKind::Incomplete,
                 ExtractionDiagnosticLevel::Warning,
@@ -294,7 +291,7 @@ impl<'tree> AdapterContext<'_, 'tree> {
                 ),
             ));
         }
-        admitted
+        fingerprint
     }
 
     /// Returns the file's handler evidence, building it on first use.
@@ -859,18 +856,17 @@ fn extract_call<'tree>(
     }
     let comparable = resolved_handler.is_some();
     let handler = resolved_handler.unwrap_or(handler);
-    let fingerprint = if context.admit_handler_work(call, handler, bound_arguments, diagnostics) {
-        fingerprint_handler(
+    let fingerprint = context.fingerprint_with_work(call, diagnostics, |budget| {
+        Some(fingerprint_handler(
             handler,
             bound_arguments,
             source,
             comparable,
             &evidence.assertions,
             &evidence.module_scope,
-        )
-    } else {
-        HandlerFingerprint::unavailable()
-    };
+            budget,
+        ))
+    })?;
     Some(step_definition(
         call,
         context,
@@ -902,13 +898,15 @@ fn extract_decorator<'tree>(
         extract_matcher(matcher_node, context, diagnostics)?;
     let handler = decorated_method(call).and_then(|method| {
         let evidence = context.handler_evidence();
-        fingerprint_method_handler(
-            method,
-            source,
-            &evidence.assertions,
-            &evidence.module_scope,
-            || context.admit_handler_work(call, method, None, diagnostics),
-        )
+        context.fingerprint_with_work(call, diagnostics, |budget| {
+            fingerprint_method_handler(
+                method,
+                source,
+                &evidence.assertions,
+                &evidence.module_scope,
+                budget,
+            )
+        })
     });
     let Some(handler) = handler else {
         diagnostics.push(dropped_registration_diagnostic(context, call));

@@ -185,27 +185,6 @@ pub(super) fn bind_arguments<'tree>(handler: Node<'tree>, source: &[u8]) -> Opti
     handler.child_by_field_name("arguments")
 }
 
-/// Fingerprints a registration handler, reading module constants from the file's `module` index.
-pub(super) fn fingerprint_handler<'tree>(
-    handler: Node<'tree>,
-    bound_arguments: Option<Node<'tree>>,
-    source: &[u8],
-    comparable: bool,
-    assertions: &AssertionBindings,
-    module: &ModuleScope<'tree>,
-) -> HandlerFingerprint {
-    let declared = declared_identifiers(handler, source);
-    fingerprint_node(
-        handler,
-        bound_arguments,
-        source,
-        comparable,
-        &declared,
-        assertions,
-        module,
-    )
-}
-
 /// Fingerprints a decorated class method without its name or decorator metadata.
 ///
 /// Parameters and runtime modifiers remain part of the fingerprint: default initializers execute
@@ -216,13 +195,13 @@ pub(super) fn fingerprint_method_handler<'tree>(
     source: &[u8],
     assertions: &AssertionBindings,
     module: &ModuleScope<'tree>,
-    admit_work: impl FnOnce() -> bool,
+    budget: &mut WorkBudget,
 ) -> Option<HandlerFingerprint> {
     debug_assert_eq!(method.kind(), "method_definition");
     let name = method.child_by_field_name("name")?;
     let parameters = method.child_by_field_name("parameters")?;
     let body = method.child_by_field_name("body")?;
-    if !admit_work() {
+    if !module.admit_handler_work(method, None, source, budget) {
         return Some(HandlerFingerprint::unavailable());
     }
     let mut identifiers = IdentifierNames::default();
@@ -282,20 +261,19 @@ pub(super) fn fingerprint_method_handler<'tree>(
     // before measuring executed behavior so two one-assertion methods do not gain artificial
     // 50% overlap merely because both are methods.
     let mut signature = vec![BehaviorEvent::Method(semantic_prefix.clone())];
-    signature.extend(behavior_signature(
-        parameters,
-        source,
-        &declared,
-        assertions,
-        &local_constants,
-    ));
-    signature.extend(behavior_signature(
-        body,
-        source,
-        &declared,
-        assertions,
-        &local_constants,
-    ));
+    for node in [parameters, body] {
+        if !collect_behavior(
+            node,
+            source,
+            &declared,
+            assertions,
+            &local_constants,
+            &mut signature,
+            budget,
+        ) {
+            return Some(HandlerFingerprint::unavailable());
+        }
+    }
     let source_snippet = format!("{semantic_prefix} {raw_parameters} {raw_body}");
     let comparable = !signature.iter().any(BehaviorEvent::is_unresolved_assertion);
 
@@ -489,16 +467,20 @@ fn collect_parameter_bindings(parameters: Node<'_>, source: &[u8], output: &mut 
     }
 }
 
-/// Builds every fingerprint form of `handler`, with `bound_arguments` appended as call context.
-fn fingerprint_node<'tree>(
+/// Fingerprints a registration handler within the shared work allowance, including bound context.
+pub(super) fn fingerprint_handler<'tree>(
     handler: Node<'tree>,
     bound_arguments: Option<Node<'tree>>,
     source: &[u8],
     comparable: bool,
-    declared: &BTreeMap<String, String>,
     assertions: &AssertionBindings,
     module: &ModuleScope<'tree>,
+    budget: &mut WorkBudget,
 ) -> HandlerFingerprint {
+    if !module.admit_handler_work(handler, bound_arguments, source, budget) {
+        return HandlerFingerprint::unavailable();
+    }
+    let declared = &declared_identifiers(handler, source);
     let raw = node_text(handler, source);
     let mut exact = raw.to_owned();
     // A module-scoped constant is a fixed value every handler in the file reads, so substituting it
@@ -518,7 +500,18 @@ fn fingerprint_node<'tree>(
     let mut alpha = serialize_ast(handler, source, &alpha_declared, AstMode::Alpha);
     let mut structural = serialize_ast(handler, source, &structural_declared, AstMode::Structural);
     let local_constants = LocalConstants::collect(handler, source, declared, module);
-    let mut signature = behavior_signature(handler, source, declared, assertions, &local_constants);
+    let mut signature = Vec::new();
+    if !collect_behavior(
+        handler,
+        source,
+        declared,
+        assertions,
+        &local_constants,
+        &mut signature,
+        budget,
+    ) {
+        return HandlerFingerprint::unavailable();
+    }
     let mut source_snippet = raw.to_owned();
     if let Some(arguments) = bound_arguments {
         let no_declarations = BTreeMap::new();
@@ -535,13 +528,17 @@ fn fingerprint_node<'tree>(
             &mut structural,
             &serialize_ast(arguments, source, &no_declarations, AstMode::Structural),
         );
-        signature.extend(behavior_signature(
+        if !collect_behavior(
             arguments,
             source,
             &no_declarations,
             assertions,
             &LocalConstants::default(),
-        ));
+            &mut signature,
+            budget,
+        ) {
+            return HandlerFingerprint::unavailable();
+        }
         source_snippet.push_str(" bound with ");
         source_snippet.push_str(node_text(arguments, source));
     }
@@ -1101,7 +1098,7 @@ impl<'m> LocalConstants<'m> {
 
     /// Collects the constants a handler body can resolve, including the module's own declarations.
     ///
-    /// `behavior_signature` reads these bindings to recognise assertions and to resolve their
+    /// `collect_behavior` reads these bindings to recognise assertions and to resolve their
     /// expected values, so a proven module constant has to be visible here too. `duplicate-handler`
     /// compares `alpha_normalized` *and* `behavior_signature`, and seeding only one of them leaves
     /// two handlers that read the same value through differently named constants unequal.
@@ -1887,27 +1884,8 @@ fn local_function_declarations<'tree>(
     declarations
 }
 
-/// Builds the handler's ordered behavior-event stream with assertion provenance and constant context.
-fn behavior_signature(
-    handler: Node<'_>,
-    source: &[u8],
-    declared: &BTreeMap<String, String>,
-    assertions: &AssertionBindings,
-    local_constants: &LocalConstants,
-) -> Vec<BehaviorEvent> {
-    let mut signature = Vec::new();
-    collect_behavior(
-        handler,
-        source,
-        declared,
-        assertions,
-        local_constants,
-        &mut signature,
-    );
-    signature
-}
-
-/// Collects executed and deferred call evidence, bounds local-function expansion and marks unresolved callback parameters conservatively.
+/// Collects ordered call evidence, charging each repeated local helper traversal before expanding it.
+/// Returns false on refusal so the caller discards the entire fingerprint.
 fn collect_behavior<'tree>(
     node: Node<'tree>,
     source: &[u8],
@@ -1915,7 +1893,8 @@ fn collect_behavior<'tree>(
     assertions: &AssertionBindings,
     local_constants: &LocalConstants,
     output: &mut Vec<BehaviorEvent>,
-) {
+    budget: &mut WorkBudget,
+) -> bool {
     let root_id = node.id();
     let local_functions = local_function_declarations(node, source);
     let mut stack = vec![(node, false, false, false)];
@@ -2062,6 +2041,9 @@ fn collect_behavior<'tree>(
                             // Arguments are not substituted, so the body's values are unproven.
                             output.push(BehaviorEvent::unresolved_assertion(deferred));
                         } else {
+                            if budget.charge(target.byte_range().len()) {
+                                return false;
+                            }
                             push_children(
                                 target,
                                 deferred,
@@ -2098,6 +2080,7 @@ fn collect_behavior<'tree>(
             &mut stack,
         );
     }
+    true
 }
 
 /// Describes an assertion by its terminal matcher, modifiers, and asserted subject.
