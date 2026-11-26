@@ -209,6 +209,8 @@ An undeclared type uses a permissive fallback that prevents a false `unused-defi
 but cannot prove ambiguity or overlap. Declaring it restores exact analysis. Invalid expressions
 fail configuration rather than silently disabling checks.
 
+The analysis reports an incomplete matcher when custom-parameter expansion would exceed 1 MiB of regex source. That definition cannot contribute to feature matching or static overlap.
+
 ## Suppressions
 
 Every configured suppression must select at least a `path` or `matcher` and include a non-empty

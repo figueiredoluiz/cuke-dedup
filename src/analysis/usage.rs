@@ -1567,8 +1567,8 @@ pub(super) fn analyze_unused_with_limits(
 
 /// Prepares a definition's matcher for its window's index, returning a diagnostic only for
 /// resource limits. Non-global and literal matchers get no expression and are non-authoritative,
-/// as is a regex the dialect cannot translate. Oversized matchers are authoritative with no
-/// expression and a diagnostic; `MatcherIndex` rejects the ones that do not compile.
+/// as is a regex the dialect cannot translate. Oversized matchers have no expression and a
+/// diagnostic. Refused fallback expansions cannot supply overlap witnesses.
 /// A Cucumber Expression the library cannot expand uses the permissive fallback, authoritative
 /// only when every placeholder resolved.
 fn prepare_matcher(
@@ -1620,65 +1620,100 @@ fn prepare_matcher(
             )
         }
         (_, MatcherKind::CucumberExpression) => {
-            match cucumber_regex_expression(&definition.matcher) {
-                CucumberRegexExpression::Compiled(expression) => {
-                    let (expression, error) = checked_expression(expression, definition);
-                    (
-                        PreparedMatcher {
-                            expression,
-                            authoritative: true,
-                        },
-                        error,
-                    )
-                }
-                CucumberRegexExpression::ResourceLimit => (
-                    PreparedMatcher {
-                        expression: None,
-                        authoritative: true,
-                    },
-                    Some(regex_limit_message(definition)),
-                ),
-                CucumberRegexExpression::Unsupported => {
-                    // Project-defined parameter types cannot be resolved without loading runtime
-                    // code. Declared ones are substituted exactly; anything still unknown falls
-                    // back to a permissive pattern that avoids false unused reports but cannot
-                    // prove runtime ambiguity. Oversized input already returned ResourceLimit.
-                    let fallback =
-                        fallback_cucumber_expression_regex(&definition.matcher, parameter_types);
-                    let (expression, error) = checked_expression(fallback.expression, definition);
-                    (
-                        PreparedMatcher {
-                            expression,
-                            authoritative: fallback.exact,
-                        },
-                        error,
-                    )
-                }
-            }
+            prepare_cucumber_matcher(definition, parameter_types, MAX_REGEX_PATTERN_BYTES)
         }
     }
 }
 
+/// Prepares either Cucumber expression expansion under one source-byte limit.
+fn prepare_cucumber_matcher(
+    definition: &StepDefinition,
+    parameter_types: &BTreeMap<String, String>,
+    limit: usize,
+) -> (PreparedMatcher, Option<String>) {
+    let (expression, authoritative) = match cucumber_regex_expression(&definition.matcher, limit) {
+        CucumberRegexExpression::Compiled(expression) => (Some(expression), true),
+        CucumberRegexExpression::ResourceLimit => (None, true),
+        CucumberRegexExpression::Unsupported => {
+            // Declared parameters preserve authority. Unknown parameters only supply approximate
+            // matches, and a refused expansion cannot provide a match or an overlap witness.
+            match fallback_cucumber_expression_regex(&definition.matcher, parameter_types, limit) {
+                Some(fallback) => (Some(fallback.expression), fallback.exact),
+                None => (None, false),
+            }
+        }
+    };
+    let (expression, error) = match expression {
+        Some(expression) => checked_expression(expression, definition),
+        None => (None, Some(regex_limit_message(definition))),
+    };
+    (
+        PreparedMatcher {
+            expression,
+            authoritative,
+        },
+        error,
+    )
+}
+
 /// Expands a Cucumber Expression to regex source: `Unsupported` when parsing or expansion fails,
-/// `ResourceLimit` when the matcher or the expansion exceeds `MAX_REGEX_PATTERN_BYTES`.
-fn cucumber_regex_expression(matcher: &str) -> CucumberRegexExpression {
-    if matcher.len() > MAX_REGEX_PATTERN_BYTES {
+/// `ResourceLimit` when the matcher or the expansion exceeds the supplied byte limit.
+fn cucumber_regex_expression(matcher: &str, limit: usize) -> CucumberRegexExpression {
+    if matcher.len() > limit {
         return CucumberRegexExpression::ResourceLimit;
     }
     let Ok(expression) = cucumber_expressions::Expression::parse(matcher) else {
         return CucumberRegexExpression::Unsupported;
     };
-    let mut expanded = String::with_capacity(matcher.len().min(MAX_REGEX_PATTERN_BYTES));
+    let mut expanded = BoundedRegexSource::new(matcher.len(), limit);
     for character in expression.into_regex_char_iter() {
         let Ok(character) = character else {
             return CucumberRegexExpression::Unsupported;
         };
-        if expanded.len().saturating_add(character.len_utf8()) > MAX_REGEX_PATTERN_BYTES {
+        if expanded.push_char(character).is_none() {
             return CucumberRegexExpression::ResourceLimit;
         }
-        expanded.push(character);
     }
-    CucumberRegexExpression::Compiled(expanded)
+    CucumberRegexExpression::Compiled(expanded.text)
+}
+
+/// Regex source that refuses a fragment before growing beyond its byte allowance.
+struct BoundedRegexSource {
+    text: String,
+    remaining: usize,
+}
+
+impl BoundedRegexSource {
+    /// Starts a bounded buffer with room for the input size, up to the output limit.
+    fn new(input_bytes: usize, limit: usize) -> Self {
+        Self {
+            text: String::with_capacity(input_bytes.min(limit)),
+            remaining: limit,
+        }
+    }
+
+    /// Appends a fragment only when its bytes fit.
+    fn push_str(&mut self, fragment: &str) -> Option<()> {
+        self.remaining = self.remaining.checked_sub(fragment.len())?;
+        self.text.push_str(fragment);
+        Some(())
+    }
+
+    /// Appends a scalar, charging its UTF-8 bytes.
+    fn push_char(&mut self, scalar: char) -> Option<()> {
+        self.push_str(scalar.encode_utf8(&mut [0; 4]))
+    }
+
+    /// Escapes literal text directly into the bounded buffer.
+    fn push_escaped(&mut self, literal: &str) -> Option<()> {
+        for scalar in literal.chars() {
+            if regex_syntax::is_meta_character(scalar) {
+                self.push_str(r"\")?;
+            }
+            self.push_char(scalar)?;
+        }
+        Some(())
+    }
 }
 
 /// Keeps `expression` for the index unless it exceeds `MAX_REGEX_PATTERN_BYTES`, which yields
@@ -1716,123 +1751,94 @@ struct FallbackExpression {
     exact: bool,
 }
 
-/// Builds an anchored approximation of a Cucumber Expression: `{int}`, `{float}`, `{word}` and
-/// `{string}` map to fixed patterns, other declared names to their configured pattern, and the rest
-/// to `.+`, which clears `exact`. `{}` is not a placeholder here and stays literal text.
+/// Builds the existing anchored fallback within the output budget. Built-in parameter names use
+/// fixed patterns, declared names use their configured pattern and unknown names mark it approximate.
 fn fallback_cucumber_expression_regex(
     expression: &str,
     parameter_types: &BTreeMap<String, String>,
-) -> FallbackExpression {
-    let mut output = String::from("^");
+    limit: usize,
+) -> Option<FallbackExpression> {
+    let mut output = BoundedRegexSource::new(expression.len(), limit);
+    output.push_str("^")?;
     let mut offset = 0;
     let mut exact = true;
     for capture in FALLBACK_PLACEHOLDER.captures_iter(expression) {
         let whole = capture.get(0).expect("whole match");
-        output.push_str(&fallback_cucumber_literal_regex(
-            &expression[offset..whole.start()],
-        ));
+        push_fallback_literal(&mut output, &expression[offset..whole.start()])?;
         let name = &capture[1];
         match name {
-            "int" => output.push_str(r"-?\d+"),
-            "float" => output.push_str(r"-?(?:\d+\.)?\d+"),
-            "word" => output.push_str(r"\S+"),
-            "string" => output.push_str(r#"(?:"[^"]*"|'[^']*')"#),
+            "int" => output.push_str(r"-?\d+")?,
+            "float" => output.push_str(r"-?(?:\d+\.)?\d+")?,
+            "word" => output.push_str(r"\S+")?,
+            "string" => output.push_str(r#"(?:"[^"]*"|'[^']*')"#)?,
             _ => match parameter_types.get(name) {
-                // A declared type is exact, so usage and ambiguity stay authoritative.
                 Some(pattern) => {
-                    output.push_str("(?:");
-                    output.push_str(pattern);
-                    output.push(')');
+                    output.push_str("(?:")?;
+                    output.push_str(pattern)?;
+                    output.push_str(")")?;
                 }
                 None => {
-                    output.push_str(r".+");
+                    output.push_str(r".+")?;
                     exact = false;
                 }
             },
         }
         offset = whole.end();
     }
-    output.push_str(&fallback_cucumber_literal_regex(&expression[offset..]));
-    output.push('$');
-    FallbackExpression {
-        expression: output,
+    push_fallback_literal(&mut output, &expression[offset..])?;
+    output.push_str("$")?;
+    Some(FallbackExpression {
+        expression: output.text,
         exact,
-    }
+    })
 }
 
-/// Translates literal text between placeholders: whitespace runs are escaped verbatim and other
-/// tokens go through `fallback_cucumber_token_regex`. Backslash escapes are not interpreted.
-fn fallback_cucumber_literal_regex(literal: &str) -> String {
-    let mut output = String::new();
-    let characters: Vec<_> = literal.chars().collect();
-    let mut offset = 0;
-    while offset < characters.len() {
-        if characters[offset].is_whitespace() {
-            let start = offset;
-            while offset < characters.len() && characters[offset].is_whitespace() {
-                offset += 1;
-            }
-            output.push_str(&regex::escape(
-                &characters[start..offset].iter().collect::<String>(),
-            ));
-            continue;
+/// Escapes whitespace runs and emits the fallback syntax for each non-whitespace token.
+fn push_fallback_literal(output: &mut BoundedRegexSource, mut literal: &str) -> Option<()> {
+    while let Some(first) = literal.chars().next() {
+        let whitespace = first.is_whitespace();
+        let end = literal
+            .find(|scalar: char| scalar.is_whitespace() != whitespace)
+            .unwrap_or(literal.len());
+        let (token, rest) = literal.split_at(end);
+        if whitespace {
+            output.push_escaped(token)?;
+        } else {
+            push_fallback_token(output, token)?;
         }
-        let start = offset;
-        while offset < characters.len() && !characters[offset].is_whitespace() {
-            offset += 1;
-        }
-        output.push_str(&fallback_cucumber_token_regex(
-            &characters[start..offset].iter().collect::<String>(),
-        ));
+        literal = rest;
     }
-    output
+    Some(())
 }
 
-/// Translates one whitespace-free token: `/` splits alternatives before anything else, `(x)`
-/// becomes an optional group, an unclosed `(` is literal, and other text is escaped.
-fn fallback_cucumber_token_regex(token: &str) -> String {
-    let alternatives: Vec<_> = token.split('/').collect();
-    if alternatives.len() > 1 {
-        return format!(
-            "(?:{})",
-            alternatives
-                .iter()
-                .map(|alternative| fallback_cucumber_token_regex(alternative))
-                .collect::<Vec<_>>()
-                .join("|")
-        );
+/// Splits alternatives before interpreting optional text.
+fn push_fallback_token(output: &mut BoundedRegexSource, token: &str) -> Option<()> {
+    let Some((first, rest)) = token.split_once('/') else {
+        return push_fallback_optional(output, token);
+    };
+    output.push_str("(?:")?;
+    push_fallback_optional(output, first)?;
+    for alternative in rest.split('/') {
+        output.push_str("|")?;
+        push_fallback_optional(output, alternative)?;
     }
+    output.push_str(")")
+}
 
-    let mut output = String::new();
-    let characters: Vec<_> = token.chars().collect();
-    let mut offset = 0;
-    while offset < characters.len() {
-        if characters[offset] == '(' {
-            if let Some(end) = characters[offset + 1..]
-                .iter()
-                .position(|character| *character == ')')
-                .map(|index| offset + index + 1)
-            {
-                let optional: String = characters[offset + 1..end].iter().collect();
-                output.push_str("(?:");
-                output.push_str(&regex::escape(&optional));
-                output.push_str(")?");
-                offset = end + 1;
-                continue;
-            }
-            output.push_str(r"\(");
-            offset += 1;
-            continue;
-        }
-        let start = offset;
-        while offset < characters.len() && characters[offset] != '(' {
-            offset += 1;
-        }
-        output.push_str(&regex::escape(
-            &characters[start..offset].iter().collect::<String>(),
-        ));
+/// Escapes text and translates closed optional groups, treating an unclosed group as literal.
+fn push_fallback_optional(output: &mut BoundedRegexSource, mut token: &str) -> Option<()> {
+    while let Some((prefix, rest)) = token.split_once('(') {
+        output.push_escaped(prefix)?;
+        let Some((optional, suffix)) = rest.split_once(')') else {
+            output.push_str(r"\(")?;
+            return output.push_escaped(rest);
+        };
+        output.push_str("(?:")?;
+        output.push_escaped(optional)?;
+        output.push_str(")?")?;
+        token = suffix;
     }
-    output
+    output.push_escaped(token)
 }
 
 #[cfg(test)]
