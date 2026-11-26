@@ -7453,6 +7453,20 @@
           "behaviorClass": "ruby-behavior"
         },
         {
+          "name": "baseline_apply_requires_regular_file",
+          "requiredStatus": "engine-invariant",
+          "stage": "bounded-io",
+          "rationale": "Adapter-independent stage `bounded-io`: Baseline apply accepts a regular baseline and refuses a directory before parsing.",
+          "behaviorClass": "shared-engine-invariant"
+        },
+        {
+          "name": "baseline_report_destinations_are_distinct",
+          "requiredStatus": "engine-invariant",
+          "stage": "bounded-io",
+          "rationale": "Adapter-independent stage `bounded-io`: Baseline apply and update refuse selected report destinations by file identity before any report is written.",
+          "behaviorClass": "shared-engine-invariant"
+        },
+        {
           "name": "regression_report_and_baseline_writes_preserve_external_targets",
           "requiredStatus": "engine-invariant",
           "stage": "bounded-io",

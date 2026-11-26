@@ -179,7 +179,7 @@ pub(crate) fn same_directory(left: &Path, right: &Path) -> io::Result<bool> {
 }
 
 /// Opens for reading; on Unix with `O_NONBLOCK`, so a FIFO put in place never blocks the open.
-fn open_nonblocking(path: &Path) -> io::Result<File> {
+pub(crate) fn open_nonblocking(path: &Path) -> io::Result<File> {
     let mut options = std::fs::OpenOptions::new();
     options.read(true);
     #[cfg(unix)]

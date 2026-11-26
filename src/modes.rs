@@ -3,8 +3,7 @@
 use crate::config::canonical_platform_path;
 use crate::model::{stable_fingerprint_parts, Finding, Rule, StepDefinition, Suppression};
 use crate::resource_limits::{
-    read_utf8, LimitedWriter, MAX_BASELINE_INPUT_BYTES, MAX_CHANGED_PATH_BYTES,
-    MAX_CHANGED_PATH_RECORDS,
+    LimitedWriter, MAX_BASELINE_INPUT_BYTES, MAX_CHANGED_PATH_BYTES, MAX_CHANGED_PATH_RECORDS,
 };
 use anyhow::{bail, Context, Result};
 use serde::{Deserialize, Serialize};
@@ -897,7 +896,18 @@ fn load_baseline_for_update(baseline_path: &Path, file: &std::fs::File) -> Resul
 ///
 /// Errors on I/O failure, input over `MAX_BASELINE_INPUT_BYTES`, invalid UTF-8, or invalid JSON.
 fn parse_baseline(baseline_path: &Path) -> Result<BaselineFile> {
-    let text = read_utf8(baseline_path, "baseline", MAX_BASELINE_INPUT_BYTES)?;
+    let file = crate::contained_read::open_nonblocking(baseline_path)
+        .with_context(|| format!("failed to read baseline {}", baseline_path.display()))?;
+    let inspect_context = format!("failed to inspect baseline {}", baseline_path.display());
+    if !file.metadata().context(inspect_context)?.is_file() {
+        bail!("baseline {} is not a regular file", baseline_path.display());
+    }
+    let text = crate::resource_limits::read_file_utf8(
+        file,
+        baseline_path,
+        "baseline",
+        MAX_BASELINE_INPUT_BYTES,
+    )?;
     decode_baseline(&text, baseline_path)
 }
 

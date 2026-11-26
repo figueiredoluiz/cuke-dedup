@@ -612,6 +612,8 @@ fn retained_output_unused_limit_respects_feature_input_and_reports_incompletenes
         assert_eq!(analyzed.run_incomplete, has_feature);
         assert!(!analyzed.corpus_incomplete);
         assert_eq!(analyzed.census.skipped_candidate_comparisons, 0);
+        let report_files =
+            reporters::ReportFiles::bind_baseline(&config, options.baseline.as_deref()).unwrap();
         let outcome = apply_baseline_mode(
             &config,
             &options,
@@ -638,6 +640,7 @@ fn retained_output_unused_limit_respects_feature_input_and_reports_incompletenes
                 parsing_ms: 0.0,
                 analysis_ms: 0.0,
             },
+            report_files,
         )
         .unwrap();
         let json: serde_json::Value =

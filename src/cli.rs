@@ -340,6 +340,7 @@ fn execute(cli: Cli) -> Result<i32> {
             })
         })
         .transpose()?;
+    let report_files = reporters::ReportFiles::bind_baseline(config, options.baseline.as_deref())?;
     let baseline_outcome = apply_baseline_mode(
         config,
         options,
@@ -364,6 +365,7 @@ fn execute(cli: Cli) -> Result<i32> {
             parsing_ms,
             analysis_ms,
         },
+        report_files,
     )?;
     write_diagnostics(config, options, &files, &diagnostics)?;
     determine_exit_code(
@@ -1382,6 +1384,7 @@ fn write_reports(
     analyzed: &AnalyzedCorpus,
     diagnostics: &Diagnostics,
     timings: PhaseTimings,
+    report_files: reporters::ReportFiles,
 ) -> Result<()> {
     let corpus = reporters::CorpusCensus {
         definition_files: files.definitions.len(),
@@ -1417,6 +1420,7 @@ fn write_reports(
         &report_metadata,
         &mut stdout,
         terminal_color,
+        report_files,
     )?;
     Ok(())
 }
