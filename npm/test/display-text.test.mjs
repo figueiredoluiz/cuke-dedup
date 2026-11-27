@@ -1,8 +1,9 @@
 import assert from "node:assert/strict";
+import { Buffer } from "node:buffer";
 import { readFileSync } from "node:fs";
 import test from "node:test";
 
-import { diagnosticSafe, REPORT_UNSAFE_RANGES } from "../lib/display-text.mjs";
+import { diagnosticSafe, REPORT_UNSAFE_RANGES, reportSafe } from "../lib/display-text.mjs";
 
 /** Diagnostic code points from Unicode 17, plus controls, separators and lone surrogates. */
 function oracleUnsafe(point) {
@@ -83,4 +84,23 @@ test("REPORT_UNSAFE_RANGES matches the Rust invisible-format predicate", () => {
     .map(([, first, last]) => [Number.parseInt(first, 16), Number.parseInt(last ?? first, 16)]);
   assert.ok(start >= 0 && ranges.length > 0, "no ranges parsed from is_invisible_format");
   assert.deepEqual(REPORT_UNSAFE_RANGES, ranges);
+});
+
+/** Checks byte boundaries for complete escape spellings and ordinary text. */
+test("reportSafe preserves complete escapes at the display boundary", () => {
+  const boundary = 8 * 1024 - 64;
+  for (const [prefix, unit] of [["a", "\\u{fe0f}"], ["é", "\\u{ad}"], ["🙂", "\\u{e0100}"]]) {
+    const input = prefix + unit.repeat(1600);
+    const units = Math.floor((boundary - Buffer.byteLength(prefix)) / unit.length);
+    const expectedPrefix = prefix + unit.repeat(units);
+    const omitted = Buffer.byteLength(input) - Buffer.byteLength(expectedPrefix);
+    assert.ok(reportSafe(input) === `${expectedPrefix}… [${omitted} bytes omitted]`, unit);
+    assert.equal(reportSafe(prefix + unit), prefix + unit);
+  }
+
+  const ordinary = "🙂".repeat(2050);
+  assert.equal(reportSafe(ordinary), "🙂".repeat(boundary / 4) + "… [72 bytes omitted]");
+  const malformed = "aa" + "\\u{badx}".repeat(1500);
+  const omitted = malformed.length - boundary;
+  assert.equal(reportSafe(malformed), malformed.slice(0, boundary) + `… [${omitted} bytes omitted]`);
 });

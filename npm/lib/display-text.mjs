@@ -58,6 +58,7 @@ export function diagnosticSafe(value) {
 
 /**
  * Projects structured report text using the Rust renderer's bound and escape spelling.
+ * Complete lowercase Unicode escape spellings stay together when shortening the display text.
  * @param {string} value Original text or already escaped display text.
  * @returns {string} The bounded display text.
  */
@@ -69,15 +70,15 @@ export function reportSafe(value) {
   let outputBytes = 0;
   let retainedSource = 0;
   let retainedOutput = 0;
-  for (const character of value) {
-    const point = character.codePointAt(0);
-    let next = character;
+  for (const [unit] of value.matchAll(/\\u\{[0-9a-f]{1,6}\}|./gsu)) {
+    const point = unit.codePointAt(0);
+    let next = unit;
     if (isInvisibleFormat(point)) {
       next = `\\u{${point.toString(16)}}`;
-    } else if (/\p{Cc}/u.test(character) && !"\t\n\r".includes(character)) {
+    } else if (/\p{Cc}/u.test(unit) && !"\t\n\r".includes(unit)) {
       next = "";
     }
-    sourceBytes += Buffer.byteLength(character);
+    sourceBytes += Buffer.byteLength(unit);
     outputBytes += Buffer.byteLength(next);
     if (sourceBytes > limit || outputBytes > limit) {
       return `${rendered.slice(0, retainedOutput)}… [${Buffer.byteLength(value) - retainedSource} bytes omitted]`;
