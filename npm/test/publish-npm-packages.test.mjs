@@ -18,17 +18,30 @@ const releaseTag = `v${version}`;
 const releaseSha = "0123456789abcdef0123456789abcdef01234567";
 
 /** Simulates npm packing, registry propagation and provenance verification without publishing. */
-function registryFixture({ existing = [], mismatch, wrongBytes, rejectedProvenance, visibility = new Map(), verificationVisibility = new Map() } = {}) {
+function registryFixture({
+  existing = [], mismatch, wrongBytes, rejectedProvenance, visibility = new Map(), verificationVisibility = new Map(),
+  failedPublish = new Map(), visibleAfterMs = new Map(),
+} = {}) {
   const available = new Set(existing);
   const published = [];
   const verified = [];
+  const events = [];
+  const clock = { now: 0 };
+  const uploadedAt = new Map(existing.map(name => [name, 0]));
   return {
     published,
     verified,
+    events,
+    clock,
     options: {
       releaseTag,
       releaseSha,
-      delay: async () => {},
+      // Simulated time: each wait advances the clock the publisher reads.
+      delay: async (ms) => {
+        events.push(`delay:${ms}`);
+        clock.now += ms;
+      },
+      now: () => clock.now,
       runNpm(args, { root }) {
         if (args[0] === "pack") {
           const manifest = JSON.parse(readFileSync(join(root, args[1], "package.json")));
@@ -40,8 +53,14 @@ function registryFixture({ existing = [], mismatch, wrongBytes, rejectedProvenan
         const name = args[1].split(/[\\/]/).at(-1).replace(`-${version}.tgz`, "");
         if (name === "cuke-dedup") assert.deepEqual(verified.slice(-platformPackages.length), platformPackages);
         published.push(name);
-        available.add(name);
-        return { status: 0 };
+        events.push(`publish:${name}`);
+        // `accepted`: npm reports failure although the registry stored the upload; `rejected`: nothing stored.
+        const failure = failedPublish.get(name);
+        if (failure !== "rejected") {
+          available.add(name);
+          uploadedAt.set(name, clock.now);
+        }
+        return { status: failure ? 1 : 0 };
       },
       async fetchResource(url) {
         const [, kind, name] = new URL(url).pathname.match(/^\/(?:(tarball|attestation)\/)?([^/]+)\//) ?? [];
@@ -62,7 +81,8 @@ function registryFixture({ existing = [], mismatch, wrongBytes, rejectedProvenan
         }
         const remaining = visibility.get(name) ?? 0;
         if (available.has(name) && remaining > 0) visibility.set(name, remaining - 1);
-        if (!available.has(name) || remaining > 0) return new Response(null, { status: 404 });
+        const hidden = clock.now < (uploadedAt.get(name) ?? 0) + (visibleAfterMs.get(name) ?? 0);
+        if (!available.has(name) || remaining > 0 || hidden) return new Response(null, { status: 404 });
         return Response.json({ name, version, dist: {
           integrity: `sha512-${sha512.toString("base64")}`,
           tarball: `https://registry.npmjs.org/tarball/${name}/package.tgz`,
@@ -77,6 +97,7 @@ function registryFixture({ existing = [], mismatch, wrongBytes, rejectedProvenan
         assert.equal(args[args.indexOf("--source-digest") + 1], releaseSha);
         if (name === rejectedProvenance) return { status: 1, stderr: "verification failed" };
         verified.push(name);
+        events.push(`verify:${name}`);
         return { status: 0 };
       },
     },
@@ -140,6 +161,70 @@ test("rechecks delayed verification data for an existing release", async () => {
   await assert.rejects(publishNpmPackages(stalled.options), /missing release verification data/);
   assert.deepEqual(stalled.published, []);
   assert.deepEqual(stalled.verified, []);
+});
+
+/** Registry lag past the old fixed 61 s schedule, near the v0.18.0 observation. */
+const lagPastOldBudgetMs = 150_000;
+/** Polls past the old seven-poll schedule, for lag modelled per request. */
+const pollsPastOldBudget = 9;
+const visibilityTimeoutMs = 10 * 60_000;
+
+/** Verify accepted uploads that stay invisible past the old fixed schedule still complete in one run. */
+test("waits for delayed visibility after publishing within one run", async () => {
+  const fixture = registryFixture({
+    visibleAfterMs: new Map([...platformPackages, "cuke-dedup"].map(name => [name, lagPastOldBudgetMs])),
+  });
+  await publishNpmPackages(fixture.options);
+  assert.deepEqual(fixture.published, [...platformPackages, "cuke-dedup"]);
+  assert.deepEqual(fixture.verified, [...platformPackages, "cuke-dedup"]);
+  // Every missing platform is uploaded before the first wait, so registry propagation overlaps.
+  const firstDelay = fixture.events.findIndex(event => event.startsWith("delay:"));
+  assert.deepEqual(fixture.events.slice(0, firstDelay), platformPackages.map(name => `publish:${name}`));
+  assert.ok(fixture.events.indexOf("publish:cuke-dedup") > fixture.events.indexOf(`verify:${platformPackages.at(-1)}`));
+  assert.ok(fixture.events.filter(event => event.startsWith("delay:")).every(event => Number(event.slice(6)) <= 30_000));
+});
+
+/** Verify visible versions whose tarball or provenance lags past the old schedule are rechecked until the deadline. */
+test("waits for delayed verification data on an existing release", async () => {
+  const name = platformPackages[0];
+  const fixture = registryFixture({
+    existing: [...platformPackages, "cuke-dedup"],
+    verificationVisibility: new Map([[`attestation/${name}`, pollsPastOldBudget]]),
+  });
+  await publishNpmPackages(fixture.options);
+  assert.deepEqual(fixture.published, []);
+  assert.deepEqual(fixture.verified, [...platformPackages, "cuke-dedup"]);
+});
+
+/** Verify the wait is bounded by elapsed time, and the launcher is withheld when a platform never appears. */
+test("stops waiting at the visibility deadline", async () => {
+  const missing = platformPackages.at(-1);
+  const fixture = registryFixture({ existing: platformPackages.slice(0, -1), visibility: new Map([[missing, Infinity]]) });
+  await assert.rejects(publishNpmPackages(fixture.options), new RegExp(`could not be verified after publication: ${missing}`));
+  assert.deepEqual(fixture.published, [missing]);
+  assert.ok(fixture.clock.now >= visibilityTimeoutMs - 30_000 && fixture.clock.now <= visibilityTimeoutMs, `${fixture.clock.now}`);
+});
+
+/** Verify a failed `npm publish` resumes only when the registry holds the exact, attested package. */
+test("resumes after a publish failure only for a verified registry package", async () => {
+  const name = platformPackages[0];
+  const accepted = registryFixture({
+    failedPublish: new Map([[name, "accepted"]]), visibleAfterMs: new Map([[name, lagPastOldBudgetMs]]),
+  });
+  await publishNpmPackages(accepted.options);
+  assert.deepEqual(accepted.published, [...platformPackages, "cuke-dedup"]);
+  assert.deepEqual(accepted.verified, [...platformPackages, "cuke-dedup"]);
+
+  const rejected = registryFixture({ failedPublish: new Map([[name, "rejected"]]) });
+  await assert.rejects(publishNpmPackages(rejected.options), new RegExp(`npm publish for ${name}@${version} failed`));
+  assert.ok(!rejected.published.includes("cuke-dedup"));
+  assert.ok(!rejected.verified.includes(name));
+
+  for (const failure of [{ mismatch: name }, { wrongBytes: name }, { rejectedProvenance: name }]) {
+    const fixture = registryFixture({ failedPublish: new Map([[name, "accepted"]]), ...failure });
+    await assert.rejects(publishNpmPackages(fixture.options), /does not match|provenance verification.*failed/i);
+    assert.ok(!fixture.published.includes("cuke-dedup"));
+  }
 });
 
 /** Verify the default npm runner executes successfully and captures a version beginning with three numeric components. */

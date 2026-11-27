@@ -15,7 +15,11 @@ const repository = "figueiredoluiz/cuke-dedup";
 const workflow = `${repository}/.github/workflows/release.yml`;
 const provenanceType = "https://slsa.dev/provenance/v1";
 const maxMetadataBytes = 512 * 1024;
-const visibilityDelays = [0, 1_000, 2_000, 4_000, 8_000, 16_000, 30_000];
+// npm can accept an upload minutes before its version, tarball and provenance are readable; v0.18.0
+// needed about two. Each phase gets one deadline; polls back off to a fixed cap.
+const visibilityTimeoutMs = 10 * 60_000;
+const visibilityDelays = [1_000, 2_000, 4_000, 8_000, 16_000];
+const maxVisibilityDelay = 30_000;
 
 /** Requires a completed subprocess before its output can be consumed. */
 function checkResult(result, operation) {
@@ -48,7 +52,7 @@ async function packPackage(packageDirectory, { root, runNpm, scratch, releaseTag
   const path = join(scratch, filename);
   const bytes = await readFile(path);
   const digest = createHash("sha512").update(bytes).digest();
-  return { name, version, spec: `${name}@${version}`, path, digest, size: bytes.length };
+  return { directory: packageDirectory, name, version, spec: `${name}@${version}`, path, digest, size: bytes.length };
 }
 
 /** Reads a bounded response directly from the npm registry. */
@@ -111,14 +115,42 @@ async function verifyRegistryPackage(pkg, dist, { fetchResource, runGh, scratch,
   return true;
 }
 
-/** Allows time for a visible version's tarball and provenance to reach the registry. */
-async function waitForRegistryVerification(pkg, options, initialDist) {
-  for (const backoff of visibilityDelays) {
-    if (backoff > 0) await options.delay(backoff);
-    const dist = backoff === 0 && initialDist ? initialDist : await lookupPackage(pkg, options.fetchResource);
+/** Polls until the version, tarball and provenance verify, or `deadline` passes. Mismatches throw at once. */
+async function waitForRegistryVerification(pkg, options, deadline, initialDist) {
+  for (let attempt = 0; ; attempt += 1) {
+    if (attempt > 0) {
+      const remaining = deadline - options.now();
+      if (remaining <= 0) return false;
+      await options.delay(Math.min(visibilityDelays[attempt - 1] ?? maxVisibilityDelay, remaining));
+    }
+    const dist = attempt === 0 && initialDist ? initialDist : await lookupPackage(pkg, options.fetchResource);
     if (dist !== null && await verifyRegistryPackage(pkg, dist, options)) return true;
   }
-  return false;
+}
+
+/** Publishes `packages`, then waits for each under one shared deadline so registry propagation overlaps. */
+async function publishAndVerify(packages, options) {
+  const failures = new Map();
+  for (const pkg of packages) {
+    console.log(`Publishing ${pkg.spec}`);
+    try {
+      checkResult(options.runNpm(npmPublishArguments(pkg.path), { capture: false, root: options.root }), `npm publish for ${pkg.spec}`);
+    } catch (error) {
+      // A rerun or an npm-side error can follow an accepted upload; only the verified registry copy decides.
+      console.log(`${error.message}; checking whether the registry holds ${pkg.spec}`);
+      failures.set(pkg, error);
+    }
+  }
+  const deadline = options.now() + visibilityTimeoutMs;
+  for (const pkg of packages) {
+    if (await waitForRegistryVerification(pkg, options, deadline)) {
+      console.log(`Verified ${pkg.spec}`);
+      continue;
+    }
+    const failure = failures.get(pkg);
+    if (failure) throw failure;
+    throw new Error(`registry package could not be verified after publication: ${pkg.spec}`);
+  }
 }
 
 /** Publishes prepared packages after checking the complete existing set against the tagged release. */
@@ -128,6 +160,7 @@ export async function publishNpmPackages({
   fetchResource = fetch,
   runGh = runGhCommand,
   delay = sleep,
+  now = Date.now,
   releaseTag = process.env.RELEASE_TAG,
   releaseSha = process.env.GITHUB_SHA,
 } = {}) {
@@ -136,10 +169,11 @@ export async function publishNpmPackages({
   }
   const scratch = await mkdtemp(join(tmpdir(), "cuke-dedup-npm-"));
   try {
-    const options = { root, runNpm, fetchResource, runGh, scratch, releaseTag, releaseSha, delay };
+    const options = { root, runNpm, fetchResource, runGh, scratch, releaseTag, releaseSha, delay, now };
     const directories = Object.values(TARGETS).map(({ packageDirectory }) => `npm/platforms/${packageDirectory}`);
     directories.push(".");
     const missing = [];
+    const existingDeadline = now() + visibilityTimeoutMs;
     for (const directory of directories) {
       const pkg = await packPackage(directory, options);
       const dist = await lookupPackage(pkg, fetchResource);
@@ -147,18 +181,14 @@ export async function publishNpmPackages({
         missing.push(pkg);
         continue;
       }
-      if (!await waitForRegistryVerification(pkg, options, dist)) {
+      if (!await waitForRegistryVerification(pkg, options, existingDeadline, dist)) {
         throw new Error(`registry package is missing release verification data for ${pkg.spec}`);
       }
       console.log(`Verified ${pkg.spec}`);
     }
-    for (const pkg of missing) {
-      console.log(`Publishing ${pkg.spec}`);
-      checkResult(runNpm(npmPublishArguments(pkg.path), { capture: false, root }), `npm publish for ${pkg.spec}`);
-      if (!await waitForRegistryVerification(pkg, options)) {
-        throw new Error(`registry package could not be verified after publication: ${pkg.spec}`);
-      }
-    }
+    // The launcher's optional dependencies must resolve, so it is published only after every platform verifies.
+    await publishAndVerify(missing.filter(({ directory }) => directory !== "."), options);
+    await publishAndVerify(missing.filter(({ directory }) => directory === "."), options);
   } finally {
     await rm(scratch, { recursive: true, force: true });
   }

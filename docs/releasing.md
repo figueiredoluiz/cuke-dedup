@@ -113,7 +113,9 @@ The site documents the latest released version, so it rebuilds from that tag.
   `.github/workflows/release.yml` and the `npm` environment on npmjs.com, with direct
   `npm publish` allowed. The workflow rejects npm clients older than the trusted-publishing minimum.
 
-For an npm-only retry, start with a published, immutable GitHub release and dispatch the workflow from its tag with `publish_npm_only` enabled. The job repacks the published GitHub archives with the Node distribution and bundled npm pinned by that tag. It verifies npm tarballs against the prepared packages and the release workflow's provenance, allowing a bounded wait for registry data to appear. It publishes and verifies missing platform packages before publishing and verifying the launcher.
+For an npm-only retry, start with a published, immutable GitHub release and dispatch the workflow from its tag with `publish_npm_only` enabled. The job repacks the published GitHub archives with the Node distribution and bundled npm pinned by that tag. It verifies npm tarballs against the prepared packages and the release workflow's provenance. It publishes the missing platform packages and verifies them, then publishes and verifies the launcher.
+
+npm can accept an upload minutes before its version, tarball and provenance are readable. Each phase (existing packages, platform packages, launcher) waits up to 10 minutes for that data, polling at most every 30 seconds. A failed `npm publish` is not fatal on its own. If the registry later serves the exact prepared tarball with this workflow's provenance, the package counts as published. A mismatch fails immediately. A package still unverified at the deadline fails the job, and a rerun resumes from the verified packages.
 
 ## Experimental Ruby releases
 
