@@ -67,11 +67,7 @@ SARIF 2.1.0 includes active findings, portable locations, stable partial fingerp
 similarity properties, suggested actions, and threshold outcome. Each rule links to its dedicated
 documentation section.
 
-`artifactLocation.uri` is a `/`-separated reference relative to the analysis root. Every byte
-outside RFC 3986 unreserved characters (`A-Z a-z 0-9 - . _ ~`) is percent-encoded, so `#`, `?`,
-`%`, `:`, spaces and non-ASCII names decode to the exact file name. A location outside the root
-is an RFC 8089 `file:` URI (`file:///C:/…`, `file://server/share/…`). A path over 8 KiB is cut on
-raw bytes, never inside a UTF-8 character, and ends with an encoded omitted-byte marker.
+`artifactLocation.uri` is a `/`-separated reference relative to the analysis root. Every byte outside RFC 3986 unreserved characters (`A-Z a-z 0-9 - . _ ~`) is percent-encoded, so `#`, `?`, `%`, `:`, spaces and non-ASCII names decode to the exact file name. A location outside the root is an RFC 8089 `file:` URI (`file:///C:/…`, `file://server/share/…`). A path over 8 KiB is cut on raw bytes at a character boundary and ends with an encoded omitted-byte marker. For a sampled URI, `artifactLocation.properties.cukeDedupDisplayPath` supplies the bounded display path with the omission count based on the original text, as in JSON reports.
 
 The GitHub Action can generate SARIF alongside terminal or HTML output. Uploading SARIF to a
 code-scanning platform is controlled by the consuming workflow and may require additional
@@ -117,7 +113,7 @@ Fields, in this order: `schemaVersion` (`"1"`), `left` and `right` (each `path`,
 - Matchers, witnesses, diff segments, and handler snippets are sampled to 8 KiB before finding construction. Samples carry omitted-byte counts and a digest of the full source text. Ambiguous-step evidence lists at most 16 matchers and states how many were omitted.
 - Pair and static-overlap analysis each retain at most 16 MiB of serialized finding evidence; reaching this limit marks analysis incomplete. Definition and fallback baseline fingerprints still use the full original inputs. Presentation sampling preserves existing version-3 baseline keys.
 - HTML-visible text is escaped.
-- Bidirectional, invisible-format, and Unicode Tag characters are removed.
+- Human-readable text and display paths show Unicode 17 default-ignorable characters as `\u{hex}` escapes. SARIF artifact URIs preserve path bytes within their URI limit. Pair and fingerprint records retain exact paths.
 - Embedded JSON characters that could close an HTML script element are encoded.
 - Terminal, JSON, HTML, and SARIF retain at most 10,000 findings, prioritizing active errors, and use a 16 MiB presentation budget. Terminal, JSON, and SARIF account for their rendered finding sizes; HTML uses a conservative estimate for escaping and repeated evidence. Findings that do not fit are omitted while selection continues for smaller later findings. Long text fields are sampled to 8 KiB with explicit omitted-byte markers. The byte budget can omit findings before the count limit; `findingsTruncated` and visible notices include those omissions. Output writers also enforce a 16 MiB ceiling and return an error if it is exceeded; string renderers never return partial documents.
 - JSONL streaming and string APIs share immutable limits of 10,000 finding records and 16 MiB. Complete records are serialized within the remaining byte budget after reserving the final summary; no partial finding is emitted to meet a limit. A summary that cannot fit returns an error before output begins. Per-field character bounds remain independent of omitted-finding counts.

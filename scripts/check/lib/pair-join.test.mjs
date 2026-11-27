@@ -53,24 +53,25 @@ test("the pair sources are the analyzer's candidate sources", async () => {
   assert.deepEqual([...PAIR_SOURCES].sort(), arms.sort());
 });
 
-/** Checks `reportPath` strips exactly the characters the report sanitizer strips, read from the Rust source. */
-test("report paths drop the characters the report sanitizer drops", async () => {
-  // `sanitize` drops controls and the shared invisible-format ranges defined in display_text.rs.
+/** Checks `reportPath` escapes exactly the invisible characters the report sanitizer escapes, read from the Rust source. */
+test("report paths escape invisible characters like the report sanitizer", async () => {
+  // `sanitize` drops controls and escapes the shared invisible-format ranges defined in display_text.rs.
   const rust = await readFile(new URL("../../../src/display_text.rs", import.meta.url), "utf8");
   const start = rust.indexOf("fn is_invisible_format(");
   const body = rust.slice(start, rust.indexOf("\n}\n", start));
   const ranges = [...body.matchAll(/'\\u\{([0-9a-f]+)\}'(?:\.\.='\\u\{([0-9a-f]+)\}')?/g)]
     .map((match) => [Number.parseInt(match[1], 16), Number.parseInt(match[2] ?? match[1], 16)]);
-  assert.ok(ranges.length >= 7, "no stripped ranges found in src/display_text.rs");
+  assert.ok(ranges.length >= 7, "no invisible-format ranges found in src/display_text.rs");
   /** The path `a<character>b` in the report's form. */
   const around = (codePoint) => reportPath(`a${String.fromCodePoint(codePoint)}b`);
   for (const [low, high] of ranges) {
-    for (const inside of [low, high, Math.floor((low + high) / 2)]) assert.equal(around(inside), "ab", `U+${inside.toString(16)}`);
+    for (const inside of [low, high, Math.floor((low + high) / 2)]) assert.equal(around(inside), `a\\u{${inside.toString(16)}}b`, `U+${inside.toString(16)}`);
     // The code points next to a range stay, unless another range covers them.
     for (const outside of [low - 1, high + 1]) {
       if (!ranges.some(([from, to]) => outside >= from && outside <= to)) assert.equal([...around(outside)].length, 3, `U+${outside.toString(16)}`);
     }
   }
+  assert.equal(reportPath("cafe\u034f-\ufe0f-\u{e0100}.ts"), "cafe\\u{34f}-\\u{fe0f}-\\u{e0100}.ts");
   assert.equal(reportPath("a\u0001b\u0007c"), "abc");
   // Line breaks and tabs are kept, as the report keeps them.
   assert.equal(reportPath("a\nb\tc\rd"), "a\nb\tc\rd");

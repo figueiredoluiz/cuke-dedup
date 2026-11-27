@@ -67,7 +67,7 @@
   {
     "name": "bidi isolates",
     "input": "\u205f\u2060\u2069\u206a",
-    "expected": "\u205f\\u{2060}\\u{2069}\u206a"
+    "expected": "\u205f\\u{2060}\\u{2069}\\u{206a}"
   },
   {
     "name": "byte order mark",
@@ -75,9 +75,19 @@
     "expected": "\\u{feff}\ufffd"
   },
   {
+    "name": "invisible marks with visible combining text",
+    "input": "cafe\u0301 \u034f\u180e",
+    "expected": "cafe\u0301 \\u{34f}\\u{180e}"
+  },
+  {
+    "name": "variation selectors shown in diagnostics",
+    "input": "\u2600\ufe0f \u908a\udb40\udd00",
+    "expected": "\u2600\\u{fe0f} \u908a\\u{e0100}"
+  },
+  {
     "name": "tag characters",
     "input": "\udb3f\udfff\udb40\udc00\udb40\udc7f\udb40\udc80",
-    "expected": "\udb3f\udfff\\u{e0000}\\u{e007f}\udb40\udc80"
+    "expected": "\udb3f\udfff\\u{e0000}\\u{e007f}\\u{e0080}"
   },
   {
     "name": "backslash is kept",

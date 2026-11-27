@@ -277,20 +277,21 @@ test("a pair is not joined to a key several definitions share", () => {
   checkIsolation(unique, absent({ compared: true, differs: MATCHER }), { pairs: [pair(unique[0], unique[1])] });
 });
 
-/** Checks paths are joined in the report's form, so invisible characters neither split nor merge keys. */
+/** Checks paths join using the same escaped labels as the report. */
 test("a pair joins by the report's form of the path", () => {
-  /** A record whose raw path holds a bidirectional override the report drops. */
+  /** A record whose raw path holds a bidirectional override the report escapes. */
   const hidden = (line, matcher) => record(line, matcher, {}, { path: "st\u202eeps.ts" });
   const records = [hidden(1, "one"), hidden(2, "two")];
-  checkIsolation(records, absent({ compared: true, differs: MATCHER }), { pairs: [pair(records[0], records[1])] });
-  // Participant labels are in the report's form too: the raw path with its invisible character selects the same records.
-  const labelled = { compared: true, differs: MATCHER, participants: ["steps.ts:1", "steps.ts:2"] };
-  checkIsolation(records, absent(labelled), { pairs: [pair(records[0], records[1])] });
-  // A record whose path differs only by an invisible character shares the participant's key.
-  const clash = [...records, record(2, "three")];
+  const evaluated = { pairs: [pair(records[0], records[1])] };
+  const comparison = { compared: true, differs: MATCHER };
+  checkIsolation(records, absent(comparison), evaluated);
+  const labelled = { ...comparison, participants: ["st\\u{202e}eps.ts:1", "st\\u{202e}eps.ts:2"] };
+  checkIsolation(records, absent(labelled), evaluated);
+  checkIsolation([...records, record(2, "three")], absent(labelled), evaluated);
+  const clash = [...records, hidden(2, "three")];
   assert.throws(
-    () => checkIsolation(clash, absent({ compared: true, differs: MATCHER }), { pairs: [pair(records[0], records[1])] }),
-    /several definitions share the key steps.ts:2:1/,
+    () => checkIsolation(clash, absent(comparison), evaluated),
+    /several definitions share the key st\\u\{202e\}eps.ts:2:1/,
   );
 });
 

@@ -151,18 +151,14 @@ fn write_finding(
     writeln!(
         writer,
         "    --> {}",
-        colorize(
-            terminal_safe(&display_location(&finding.primary, root)),
-            "94",
-            color
-        )
+        colorize(display_location(&finding.primary, root, false), "94", color)
     )?;
     let retained_related = MAX_REPORTED_CLUSTER_MEMBERS.saturating_sub(1);
     for related in finding.related.iter().take(retained_related) {
         writeln!(
             writer,
             "    related: {}",
-            colorize(terminal_safe(&display_location(related, root)), "94", color)
+            colorize(display_location(related, root, false), "94", color)
         )?;
     }
     if finding.related.len() > retained_related {

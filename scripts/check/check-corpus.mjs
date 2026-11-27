@@ -142,8 +142,9 @@ function parityFinding(finding) {
 /** Convert a SARIF physical location into the analyzer report location shape. */
 function sarifLocation(location) {
   const physical = location.physicalLocation;
+  const artifact = physical.artifactLocation;
   return {
-    path: sarifDisplayPath(physical.artifactLocation.uri),
+    path: sarifDisplayPath(artifact.uri, artifact.properties?.cukeDedupDisplayPath),
     line: physical.region.startLine,
     column: physical.region.startColumn,
     endLine: physical.region.endLine,

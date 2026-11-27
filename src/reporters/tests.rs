@@ -82,35 +82,53 @@ pub(super) fn result(root: &Path) -> AnalysisResult {
     }
 }
 
-/// Checks JSON schema version, relative paths, camel-case evidence keys, and removal of invisible controls.
+/// Checks JSON schema fields and visible Unicode escapes across every report format.
 #[test]
 fn json_uses_versioned_schema_and_relative_paths() {
     let root = PathBuf::from("/repo");
     let mut analysis = result(&root);
     analysis.findings[0]
         .message
-        .push_str("\u{202e}\u{200b}\u{2060}\u{feff}\u{00ad}\u{e0001}\u{e007f}");
-    let json = render_json(&ReportContext::new(&analysis, &root, 0.0)).unwrap();
+        .push_str(" café\u{034f}\u{202e}\u{fe0f}\u{e0100}\u{0007} visible");
+    let expected = r"Duplicate <matcher> café\u{34f}\u{202e}\u{fe0f}\u{e0100} visible";
+    let context = ReportContext::new(&analysis, &root, 0.0);
+    let json = render_json(&context).unwrap();
     assert!(json.contains("\"schemaVersion\": \"3\""));
     assert!(json.contains("\"path\": \"steps/a.ts\""));
     assert!(json.contains("\"leftHandler\": \"() => '</script><script>bad()</script>'\""));
     assert!(!json.contains("/repo/steps"));
-    for invisible in [
-        '\u{202e}',
-        '\u{200b}',
-        '\u{2060}',
-        '\u{feff}',
-        '\u{00ad}',
-        '\u{e0001}',
-        '\u{e007f}',
-    ] {
+    for invisible in ['\u{034f}', '\u{202e}', '\u{fe0f}', '\u{e0100}', '\u{0007}'] {
         assert!(!json.contains(invisible));
     }
     let value: serde_json::Value = serde_json::from_str(&json).unwrap();
+    assert_eq!(value["findings"][0]["message"], expected);
     let evidence = &value["findings"][0]["evidence"];
     assert!(evidence.get("matcherSimilarity").is_some());
     assert!(evidence.get("handlerSimilarity").is_some());
     assert!(evidence.get("matcher_similarity").is_none());
+
+    let mut terminal = Vec::new();
+    write_terminal(&context, &mut terminal).unwrap();
+    assert!(String::from_utf8(terminal).unwrap().contains(expected));
+    let html = render_html(&context).unwrap();
+    assert!(html.contains(&expected.replace("<matcher>", "&lt;matcher&gt;")));
+
+    let jsonl = render_jsonl(&context).unwrap();
+    let finding: serde_json::Value = serde_json::from_str(jsonl.lines().next().unwrap()).unwrap();
+    assert_eq!(finding["message"], expected);
+    let fingerprint = crate::modes::finding_fingerprint(&analysis.findings[0]);
+    assert_eq!(finding["fingerprint"], fingerprint);
+
+    let sarif: serde_json::Value = serde_json::from_str(&render_sarif(&context).unwrap()).unwrap();
+    let finding = &sarif["runs"][0]["results"][0];
+    assert_eq!(finding["message"]["text"], expected);
+    assert_eq!(
+        finding["partialFingerprints"]["cukeDedupFingerprint/v3"],
+        fingerprint
+    );
+
+    let expanded = super::shared::report_safe(&"\u{fe0f}".repeat(1100));
+    assert_eq!(expanded, r"\u{fe0f}".repeat(1016) + "… [252 bytes omitted]");
 }
 
 /// Checks the default summary fails its zero threshold when duplicate definitions are present.

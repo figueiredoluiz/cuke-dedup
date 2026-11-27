@@ -175,16 +175,9 @@ When the unused-definition evidence limit is reached, the tool keeps the finding
 
 ## Report safety
 
-Reports bound source snippets and cluster memberships, escape HTML, encode script-closing JSON
-characters, and remove bidirectional, invisible-format, and Unicode Tag characters. JSONL content
-still originates in the analyzed repository and must be treated as untrusted data rather than
-agent instructions.
+Reports bound source snippets and cluster memberships, escape HTML, and encode script-closing JSON characters. Human-readable fields show Unicode 17 default-ignorable characters as `\u{hex}` escapes within the existing text budgets. This makes otherwise invisible formatting visible and can change how emoji and scripts appear. Exact artifact URIs and machine identities retain their original text. JSONL content originates in the analyzed repository and must be treated as untrusted data.
 
-Diagnostics on stderr (warnings, errors, `--explain-discovery` lines, the fatal `error:` line, Git
-messages) and the Action's own messages escape the same characters instead of removing them, plus
-control characters and U+2028/U+2029: `\n`, `\r` and `\t` by name, others as `\u{hex}`
-(`\u{1b}`, `\u{202e}`). Each diagnostic stays on one line that starts with `cuke-dedup` or
-`error:`, so a file name cannot start a CI workflow command. Backslashes are not escaped.
+Diagnostics on stderr and the Action's own messages escape Unicode 17 default-ignorable characters, control characters and U+2028/U+2029. Line breaks and tabs use `\n`, `\r` and `\t`. Other escaped characters use `\u{hex}`, such as `\u{1b}` and `\u{202e}`. Each diagnostic stays on one line that starts with `cuke-dedup` or `error:`. Literal backslashes pass through.
 
 Warnings, errors, and discovery explanations each keep up to 4,096 details and 1 MiB of escaped lines, plus one line to indicate omitted details. Long details are sampled before escaping. Omitted error details still cause an operational failure.
 

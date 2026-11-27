@@ -2,16 +2,15 @@
 // the candidate-recall report share the definition key and the pair-source census; only the gate
 // requires the join to be exact.
 
+import { reportSafe } from "../../../npm/lib/display-text.mjs";
+
 /**
- * The path as the JSON report writes it. Reports drop control characters other than line breaks and
- * tabs, plus bidirectional and invisible-format characters (`report_safe` in the reporters), while
- * `--emit-pairs` and `--emit-fingerprints` keep them raw; keys are compared in the report's form.
- * Two paths that differ only by such characters share a key.
+ * The JSON reporter's display spelling of a path. The pair and fingerprint files keep the original.
  * @param {string} path
  * @returns {string}
  */
 export function reportPath(path) {
-  return path.replace(/(?![\n\r\t])[\p{Cc}\u00ad\u061c\u200b-\u200f\u202a-\u202e\u2060-\u2069\ufeff\u{e0000}-\u{e007f}]/gu, "");
+  return reportSafe(path);
 }
 
 /**
