@@ -1,5 +1,4 @@
-//! Character classes for text shown to people: reports drop unsafe characters, diagnostics escape
-//! them.
+//! Character classes and escapes for text shown in reports and diagnostics.
 
 use crate::resource_limits::{
     sample_text, WorkBudget, MAX_DIAGNOSTIC_BYTES, MAX_DIAGNOSTIC_RECORDS, MAX_REPORT_FIELD_BYTES,
@@ -7,24 +6,31 @@ use crate::resource_limits::{
 use std::borrow::Cow;
 use std::fmt::Write as _;
 
-/// Invisible-format characters (soft hyphen, bidi marks, embeddings, overrides and isolates,
-/// zero-width characters, byte order mark, tags) that can make one string display as another.
+/// Unicode 17 default-ignorable scalars that can change how other characters are displayed.
 pub(crate) fn is_invisible_format(character: char) -> bool {
     matches!(
         character,
         '\u{00ad}'
+            | '\u{034f}'
             | '\u{061c}'
+            | '\u{115f}'..='\u{1160}'
+            | '\u{17b4}'..='\u{17b5}'
+            | '\u{180b}'..='\u{180f}'
             | '\u{200b}'..='\u{200f}'
             | '\u{202a}'..='\u{202e}'
-            | '\u{2060}'..='\u{2069}'
+            | '\u{2060}'..='\u{206f}'
+            | '\u{3164}'
+            | '\u{fe00}'..='\u{fe0f}'
             | '\u{feff}'
-            | '\u{e0000}'..='\u{e007f}'
+            | '\u{ffa0}'
+            | '\u{fff0}'..='\u{fff8}'
+            | '\u{1bca0}'..='\u{1bca3}'
+            | '\u{1d173}'..='\u{1d17a}'
+            | '\u{e0000}'..='\u{e0fff}'
     )
 }
 
-/// Characters a diagnostic line must not carry raw: controls can rewrite the terminal or start a
-/// CI workflow command on a new line, separators break lines in some viewers, and invisible-format
-/// characters disguise text.
+/// Identifies the controls, separators and invisible-format scalars escaped on diagnostic lines.
 fn is_diagnostic_unsafe(character: char) -> bool {
     character.is_control()
         || is_invisible_format(character)

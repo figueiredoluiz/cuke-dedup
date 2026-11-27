@@ -1,6 +1,4 @@
-import { REPORT_UNSAFE_RANGES } from "../../../npm/lib/display-text.mjs";
-
-export { REPORT_UNSAFE_RANGES };
+import { reportSafe } from "../../../npm/lib/display-text.mjs";
 
 /**
  * Decodes a percent-encoded SARIF `artifactLocation.uri` to the exact file-name text.
@@ -24,18 +22,12 @@ export function decodeSarifUri(uri) {
 }
 
 /**
- * Projects a SARIF URI onto the JSON reporter's display path for parity checks: `\` reads as
- * `/`, controls other than tab and line breaks and `REPORT_UNSAFE_RANGES` are dropped. The URI
- * itself stays exact; only the comparison is normalized.
+ * Projects a SARIF URI onto the JSON reporter's display path for parity checks.
  * @param {string} uri Root-relative URI from the SARIF reporter.
+ * @param {string} [displayPath] Original display projection supplied with a sampled URI.
  * @returns {string} The path as the JSON reporter displays it.
  */
-export function sarifDisplayPath(uri) {
-  return [...decodeSarifUri(uri).replaceAll("\\", "/")]
-    .filter((character) => {
-      const point = character.codePointAt(0);
-      const control = /\p{Cc}/u.test(character) && !"\t\n\r".includes(character);
-      return !control && !REPORT_UNSAFE_RANGES.some(([start, end]) => point >= start && point <= end);
-    })
-    .join("");
+export function sarifDisplayPath(uri, displayPath) {
+  if (typeof displayPath === "string") return displayPath;
+  return reportSafe(decodeSarifUri(uri).replaceAll("\\", "/"));
 }

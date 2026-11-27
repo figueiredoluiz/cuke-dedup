@@ -1,5 +1,6 @@
 use super::shared::{
-    bounded_findings, bounded_json, pretty_json_cost, report_safe, MAX_REPORTED_CLUSTER_MEMBERS,
+    bounded_findings, bounded_json, convert_location, pretty_json_cost, report_safe,
+    MAX_REPORTED_CLUSTER_MEMBERS,
 };
 use super::{CliReportMetadata, ReportContext};
 use crate::model::{Finding, Severity, SourceLocation};
@@ -135,9 +136,16 @@ fn sarif_finding(finding: &Finding, root: &Path) -> serde_json::Value {
 
 /// Builds a SARIF location with a root-relative URI and region; sets `id` only when one is given.
 fn sarif_location(location: &SourceLocation, root: &Path, id: Option<usize>) -> serde_json::Value {
+    let (uri, sampled) = artifact_uri(&location.path, root);
+    let mut artifact = serde_json::json!({ "uri": uri });
+    if sampled {
+        artifact["properties"] = serde_json::json!({
+            "cukeDedupDisplayPath": convert_location(location, root).path,
+        });
+    }
     let mut value = serde_json::json!({
         "physicalLocation": {
-            "artifactLocation": { "uri": artifact_uri(&location.path, root) },
+            "artifactLocation": artifact,
             "region": {
                 "startLine": location.line,
                 "startColumn": location.column,
@@ -154,8 +162,9 @@ fn sarif_location(location: &SourceLocation, root: &Path, id: Option<usize>) -> 
 
 /// Encodes `path` as an RFC 3986 reference: root-relative when under `root`, else an RFC 8089
 /// `file:` URI. Segments keep exact bytes so consumers resolve the same file; separators come
-/// from path components, so a Unix file name containing `\` stays one segment.
-fn artifact_uri(path: &Path, root: &Path) -> String {
+/// from path components, so a Unix file name containing `\` stays one segment. The second value
+/// indicates whether the native path was sampled.
+fn artifact_uri(path: &Path, root: &Path) -> (String, bool) {
     let (relative, absolute) = match path.strip_prefix(root) {
         Ok(relative) => (relative, false),
         Err(_) => (path, path.is_absolute()),
@@ -192,15 +201,17 @@ fn artifact_uri(path: &Path, root: &Path) -> String {
         .map(percent_encode)
         .collect::<Vec<_>>()
         .join("/");
+    let sampled = marker.is_some();
     if let Some(marker) = marker {
         encoded.push_str(&percent_encode(marker.as_bytes()));
     }
     // A prefix makes the path non-relative even when `is_absolute` is false (`C:foo`).
-    if absolute || !lead.is_empty() {
+    let uri = if absolute || !lead.is_empty() {
         format!("file://{}/{lead}{encoded}", percent_encode(&authority))
     } else {
         encoded
-    }
+    };
+    (uri, sampled)
 }
 
 /// RFC 8089 authority and leading path text for a Windows prefix: `C:/` for a drive (the colon

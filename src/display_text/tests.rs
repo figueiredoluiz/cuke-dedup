@@ -1,4 +1,4 @@
-use super::{diagnostic_safe, is_invisible_format};
+use super::{diagnostic_safe, is_diagnostic_unsafe, is_invisible_format};
 use crate::tests::property_runner::generated;
 use proptest::prelude::*;
 use serde::Deserialize;
@@ -49,9 +49,15 @@ const BOUNDARIES: &[char] = &[
     '\u{ac}',
     '\u{ad}',
     '\u{ae}',
+    '\u{34e}',
+    '\u{34f}',
+    '\u{350}',
     '\u{61b}',
     '\u{61c}',
     '\u{61d}',
+    '\u{180b}',
+    '\u{180f}',
+    '\u{1810}',
     '\u{200a}',
     '\u{200b}',
     '\u{200f}',
@@ -66,6 +72,12 @@ const BOUNDARIES: &[char] = &[
     '\u{2060}',
     '\u{2069}',
     '\u{206a}',
+    '\u{206f}',
+    '\u{2070}',
+    '\u{fdff}',
+    '\u{fe00}',
+    '\u{fe0f}',
+    '\u{fe10}',
     '\u{fefe}',
     '\u{feff}',
     '\u{ff00}',
@@ -73,6 +85,9 @@ const BOUNDARIES: &[char] = &[
     '\u{e0000}',
     '\u{e007f}',
     '\u{e0080}',
+    '\u{e0100}',
+    '\u{e0fff}',
+    '\u{e1000}',
     '\\',
     ':',
     '#',
@@ -121,7 +136,7 @@ fn shared_escape_cases_match() {
     }
 }
 
-/// The invisible-format predicate shared with report sanitizing covers exactly the report ranges.
+/// Checks all Unicode scalars against the distinct report and diagnostic policies.
 #[test]
 fn invisible_format_matches_the_report_ranges() {
     for point in (0..=0x10ffff).filter_map(char::from_u32) {
@@ -133,6 +148,11 @@ fn invisible_format_matches_the_report_ranges() {
             expected,
             "U+{:04X}",
             u32::from(point)
+        );
+        assert_eq!(
+            is_diagnostic_unsafe(point),
+            oracle_unsafe(point),
+            "{point:?}"
         );
     }
 }

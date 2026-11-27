@@ -209,6 +209,35 @@ fn oversized_paths_stay_bounded_and_valid() {
         "{}",
         &emitted[emitted.len().saturating_sub(80)..]
     );
+
+    let location = SourceLocation::new(root.join("\u{fe0f}".repeat(3000)), 1, 1, 1, 2);
+    let value = sarif_location(&location, &root, None);
+    let artifact = &value["physicalLocation"]["artifactLocation"];
+    let display = r"\u{fe0f}".repeat(1016) + "… [5952 bytes omitted]";
+    assert_eq!(convert_location(&location, &root).path, display);
+    assert_eq!(
+        artifact["properties"]["cukeDedupDisplayPath"].as_str(),
+        Some(display.as_str())
+    );
+    assert_eq!(
+        artifact["uri"].as_str().unwrap(),
+        "%EF%B8%8F".repeat(2709) + "%E2%80%A6%20%5B873%20bytes%20omitted%5D"
+    );
+
+    let ordinary = SourceLocation::new(root.join("ordinary.ts"), 1, 1, 1, 2);
+    let value = sarif_location(&ordinary, &root, None);
+    assert_eq!(
+        value["physicalLocation"]["artifactLocation"],
+        serde_json::json!({ "uri": "ordinary.ts" })
+    );
+
+    #[cfg(windows)]
+    {
+        use std::os::windows::ffi::OsStringExt;
+        let name = std::ffi::OsString::from_wide(&[0x0061, 0xd800, 0x0062]);
+        let location = SourceLocation::new(root.join(name), 1, 1, 1, 2);
+        assert_eq!(convert_location(&location, &root).path, "a\u{fffd}b");
+    }
 }
 
 /// The cut lands on native bytes: a split UTF-8 character is dropped whole and the marker counts
@@ -235,15 +264,34 @@ fn oversized_non_utf8_names_sample_native_bytes() {
     use std::os::unix::ffi::OsStrExt;
     let root = root();
     let kept = MAX_REPORT_FIELD_BYTES - 64;
+    let kept_characters = kept / 3;
     for byte in [0xFF_u8, 0x80] {
         let name = vec![byte; 9000];
-        let emitted = uri(&root.join(std::ffi::OsStr::from_bytes(&name)), &root);
+        let location =
+            SourceLocation::new(root.join(std::ffi::OsStr::from_bytes(&name)), 1, 1, 1, 2);
+        let value = sarif_location(&location, &root, None);
+        let artifact = &value["physicalLocation"]["artifactLocation"];
         let expected = format!(
             "{}%E2%80%A6%20%5B{}%20bytes%20omitted%5D",
             format!("%{byte:02X}").repeat(kept),
             9000 - kept
         );
-        assert_eq!(emitted, expected, "byte {byte:#04x}");
+        assert_eq!(
+            artifact["uri"].as_str(),
+            Some(expected.as_str()),
+            "byte {byte:#04x}"
+        );
+        let display = format!(
+            "{}… [{} bytes omitted]",
+            "\u{fffd}".repeat(kept_characters),
+            (name.len() - kept_characters) * 3
+        );
+        assert_eq!(convert_location(&location, &root).path, display);
+        assert_eq!(
+            artifact["properties"]["cukeDedupDisplayPath"].as_str(),
+            Some(display.as_str()),
+            "byte {byte:#04x}"
+        );
     }
 }
 

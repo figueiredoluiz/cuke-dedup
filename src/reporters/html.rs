@@ -66,7 +66,7 @@ pub(super) fn render_html_context_with_metadata(
     let selected = bounded_findings(result, true, |finding| html_finding_cost(finding, root));
     let truncated = selected.truncated;
     for finding in selected.findings {
-        let location = display_location(&finding.primary, root);
+        let location = display_location(&finding.primary, root, true);
         let retained_related = MAX_REPORTED_CLUSTER_MEMBERS.saturating_sub(1);
         let mut related_locations = finding
             .related
@@ -75,7 +75,7 @@ pub(super) fn render_html_context_with_metadata(
             .map(|related| {
                 format!(
                     r#"<li><code>{}</code></li>"#,
-                    html_escape(&display_location(related, root))
+                    escape_markup(&display_location(related, root, true))
                 )
             })
             .collect::<String>();
@@ -112,7 +112,7 @@ pub(super) fn render_html_context_with_metadata(
             finding.severity,
             finding.rule,
             html_escape(&finding.message),
-            html_escape(&location),
+            escape_markup(&location),
             html_escape(&finding.evidence.matcher_difference),
             html_escape(&finding.suggested_action),
         ));
@@ -271,7 +271,12 @@ fn render_matcher_side(diff: &MatcherDiff, left: bool) -> String {
 
 /// Sanitizes with `report_safe`, then escapes `&`, `<`, `>`, `"` and `'` for text and attributes.
 fn html_escape(value: &str) -> String {
-    report_safe(value)
+    escape_markup(&report_safe(value))
+}
+
+/// Escapes markup after the display text has already been sanitized.
+fn escape_markup(value: &str) -> String {
+    value
         .replace('&', "&amp;")
         .replace('<', "&lt;")
         .replace('>', "&gt;")

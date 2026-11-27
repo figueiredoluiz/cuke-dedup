@@ -5,11 +5,10 @@ use crate::model::{
     AnalysisResult, DefinitionCluster, DefinitionComparison, Finding, FindingEvidence, MatcherDiff,
     Rule, Severity, SourceLocation, Suppression,
 };
-use crate::resource_limits::{
-    sample_text, LimitedWriter, MAX_BUFFERED_REPORT_BYTES, MAX_REPORT_FIELD_BYTES,
-};
+use crate::resource_limits::{LimitedWriter, MAX_BUFFERED_REPORT_BYTES, MAX_REPORT_FIELD_BYTES};
 use anyhow::Result;
 use serde::Serialize;
+use std::fmt::Write as _;
 use std::io::{self, Write};
 use std::path::Path;
 
@@ -270,14 +269,8 @@ fn convert_finding(finding: &Finding, root: &Path) -> ReportFinding {
 /// Converts a location with its path made relative to `root` when under it, `/`-separated, and
 /// sanitized with `report_safe`.
 pub(super) fn convert_location(location: &SourceLocation, root: &Path) -> ReportLocation {
-    let relative_path = location
-        .path
-        .strip_prefix(root)
-        .unwrap_or(&location.path)
-        .to_string_lossy();
-    let relative_path = sample_text(&relative_path, MAX_REPORT_FIELD_BYTES).replace('\\', "/");
     ReportLocation {
-        path: report_safe(&relative_path),
+        path: display_path(location, root, true),
         line: location.line,
         column: location.column,
         end_line: location.end_line,
@@ -285,10 +278,51 @@ pub(super) fn convert_location(location: &SourceLocation, root: &Path) -> Report
     }
 }
 
+/// Projects the root-relative path once, before adding the display location suffix.
+fn display_path(location: &SourceLocation, root: &Path, keep_whitespace: bool) -> String {
+    let relative_path = location
+        .path
+        .strip_prefix(root)
+        .unwrap_or(&location.path)
+        .as_os_str();
+    if let Some(text) = relative_path.to_str() {
+        return sanitize(text, keep_whitespace, true);
+    }
+
+    #[cfg(unix)]
+    let characters = relative_path
+        .as_encoded_bytes()
+        .utf8_chunks()
+        .flat_map(|chunk| {
+            chunk
+                .valid()
+                .chars()
+                .chain((!chunk.invalid().is_empty()).then_some(char::REPLACEMENT_CHARACTER))
+        });
+    #[cfg(windows)]
+    let characters = {
+        use std::os::windows::ffi::OsStrExt;
+        char::decode_utf16(relative_path.encode_wide())
+            .map(|character| character.unwrap_or(char::REPLACEMENT_CHARACTER))
+    };
+    #[cfg(any(unix, windows))]
+    {
+        sanitize_characters(characters, None, keep_whitespace, true)
+    }
+    #[cfg(not(any(unix, windows)))]
+    {
+        sanitize(&relative_path.to_string_lossy(), keep_whitespace, true)
+    }
+}
+
 /// Formats a sampled root-relative path and its source position without copying the full path.
-pub(super) fn display_location(location: &SourceLocation, root: &Path) -> String {
-    let location = convert_location(location, root);
-    format!("{}:{}:{}", location.path, location.line, location.column)
+pub(super) fn display_location(
+    location: &SourceLocation,
+    root: &Path,
+    keep_whitespace: bool,
+) -> String {
+    let path = display_path(location, root, keep_whitespace);
+    format!("{path}:{}:{}", location.line, location.column)
 }
 
 /// Formats `count` and `singular`, appending `s` unless `count` is 1.
@@ -297,29 +331,68 @@ pub(super) fn count_label(count: usize, singular: &str) -> String {
     format!("{count} {singular}{suffix}")
 }
 
-/// Removes characters that could rewrite or misrepresent output when rendered.
-///
-/// Report text is attacker-controlled: it comes from matchers, handlers, and paths in the
-/// analyzed repository. Control characters can rewrite a terminal line, and bidirectional or
-/// invisible-format characters can make one string display as another.
-fn sanitize(value: &str, keep_whitespace: bool) -> String {
-    sample_text(value, MAX_REPORT_FIELD_BYTES)
-        .chars()
-        .filter(|character| {
-            let allowed_control = keep_whitespace && matches!(*character, '\n' | '\r' | '\t');
-            (!character.is_control() || allowed_control) && !is_invisible_format(*character)
-        })
-        .collect()
+/// Escapes invisible formatting, drops unwanted controls, and bounds source and rendered bytes.
+fn sanitize(value: &str, keep_whitespace: bool, normalize_separators: bool) -> String {
+    sanitize_characters(
+        value.chars(),
+        Some(value.len()),
+        keep_whitespace,
+        normalize_separators,
+    )
+}
+
+/// Stores only the rendered prefix. When a lossy path's length is unknown, counts its trailing
+/// decoded bytes after truncation without collecting the whole path.
+fn sanitize_characters(
+    mut characters: impl Iterator<Item = char>,
+    source_len: Option<usize>,
+    keep_whitespace: bool,
+    normalize_separators: bool,
+) -> String {
+    let limit = MAX_REPORT_FIELD_BYTES;
+    let marker_boundary = limit - 64;
+    let mut rendered = String::with_capacity(source_len.unwrap_or(limit).min(limit));
+    let mut consumed = 0;
+    let mut retained = (0, 0);
+    for character in characters.by_ref() {
+        consumed += character.len_utf8();
+        if consumed > limit {
+            break;
+        }
+        if is_invisible_format(character) {
+            let _ = write!(rendered, "{}", character.escape_unicode());
+        } else if !character.is_control()
+            || (keep_whitespace && matches!(character, '\n' | '\r' | '\t'))
+        {
+            rendered.push(match character {
+                '\\' if normalize_separators => '/',
+                other => other,
+            });
+        }
+        if rendered.len() > limit {
+            break;
+        }
+        if consumed <= marker_boundary && rendered.len() <= marker_boundary {
+            retained = (consumed, rendered.len());
+        }
+    }
+    if consumed > limit || rendered.len() > limit {
+        let source_len =
+            source_len.unwrap_or_else(|| consumed + characters.map(char::len_utf8).sum::<usize>());
+        rendered.truncate(retained.1);
+        let _ = write!(rendered, "… [{} bytes omitted]", source_len - retained.0);
+    }
+    rendered
 }
 
 /// Sanitizes text for a terminal, where even newlines and tabs would break line-oriented output.
 pub(super) fn terminal_safe(value: &str) -> String {
-    sanitize(value, false)
+    sanitize(value, false, false)
 }
 
 /// Sanitizes text for structured reports, which preserve intentional line breaks and tabs.
 pub(super) fn report_safe(value: &str) -> String {
-    sanitize(value, true)
+    sanitize(value, true, false)
 }
 
 /// Serializes through a capped writer so escape expansion cannot allocate an oversized output.

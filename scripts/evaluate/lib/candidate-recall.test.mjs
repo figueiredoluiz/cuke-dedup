@@ -181,14 +181,16 @@ test("a cluster with truncated related locations is an anomaly, not a positive",
 /** Checks paths the report sanitizes still join to the raw paths in the pair and fingerprint records. */
 test("a path the report sanitized joins to its raw record path", () => {
   const raw = "ste\u200bps.ts";
-  const sanitized = { ...finding("duplicate-matcher", 1, 2) };
+  const display = "ste\\u{200b}ps.ts";
+  const sanitized = finding("duplicate-matcher", 1, 2);
+  sanitized.primary.path = display;
+  sanitized.related[0].path = display;
   const rawPair = between({ path: raw, line: 1, column: 1 }, { path: raw, line: 2, column: 1 }, ["identicalHandler"]);
   const joined = candidateRecallForCase(baseCase(), observed([sanitized], [rawPair]));
   assert.deepEqual(joined.positives[0].sources, ["identicalHandler"]);
-  // Control: a path that only looks similar is not joined, and tabs and line breaks are kept as the report keeps them.
-  const different = { ...rawPair, left: { ...rawPair.left, path: "other.ts" } };
+  const different = { ...rawPair, left: { ...rawPair.left, path: "steps.ts" } };
   assert.equal(candidateRecallForCase(baseCase(), observed([sanitized], [different])).positives[0].reached, false);
-  const located = baseCase({ expectedFindings: [{ rule: "duplicate-matcher", primaryPath: "steps.ts", primaryLine: 1, relatedLocations: ["steps.ts:2"] }] });
+  const located = baseCase({ expectedFindings: [{ rule: "duplicate-matcher", primaryPath: display, primaryLine: 1, relatedLocations: [`${display}:2`] }] });
   const result = candidateRecallForCase(located, observed([], [rawPair], [{ path: raw, line: 1, column: 1, matcher: "a" }, { path: raw, line: 2, column: 1, matcher: "a" }]));
   assert.equal(result.discarded[0].state, "evaluated-no-finding");
 });
