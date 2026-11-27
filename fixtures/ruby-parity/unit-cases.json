@@ -3287,6 +3287,76 @@
           "behaviorClass": "shared-engine-invariant"
         },
         {
+          "name": "changed_files_bound_index_snapshot_bytes",
+          "requiredStatus": "engine-invariant",
+          "stage": "bounded-io",
+          "rationale": "The shared Git index copy admits the configured byte limit and leaves no partial copy on refusal.",
+          "behaviorClass": "shared-engine-invariant"
+        },
+        {
+          "name": "changed_files_bound_worktree_settings",
+          "requiredStatus": "engine-invariant",
+          "stage": "bounded-io",
+          "rationale": "Changed-file analysis refuses an oversized Git settings listing before using any settings.",
+          "behaviorClass": "shared-engine-invariant"
+        },
+        {
+          "name": "changed_files_do_not_refresh_the_original_shared_index",
+          "requiredStatus": "engine-invariant",
+          "stage": "session-plumbing",
+          "rationale": "Changed-file comparison preserves the checkout's shared index and performs native Git work on its own snapshot.",
+          "behaviorClass": "shared-engine-invariant"
+        },
+        {
+          "name": "shared_index_hint_requires_a_private_path_and_matching_digest",
+          "requiredStatus": "engine-invariant",
+          "stage": "bounded-io",
+          "rationale": "The private index query accepts a unique shared-index filename for the active Git object format.",
+          "behaviorClass": "shared-engine-invariant"
+        },
+        {
+          "name": "changed_files_validate_configured_git_input_files",
+          "requiredStatus": "engine-invariant",
+          "stage": "bounded-io",
+          "rationale": "Changed-file analysis preserves worktree-relative Git inputs and refuses directories and oversized files.",
+          "behaviorClass": "shared-engine-invariant"
+        },
+        {
+          "name": "changed_files_confine_repository_owned_git_inputs",
+          "requiredStatus": "engine-invariant",
+          "stage": "bounded-io",
+          "rationale": "Changed-file selection confines repository-managed Git rules to the checkout before language-specific analysis.",
+          "behaviorClass": "shared-engine-invariant"
+        },
+        {
+          "name": "changed_files_configured_input_requires_a_windows_filesystem_path",
+          "requiredStatus": "engine-invariant",
+          "stage": "bounded-io",
+          "rationale": "Windows device path classification precedes Git file access independently of the source adapter.",
+          "behaviorClass": "shared-engine-invariant"
+        },
+        {
+          "name": "changed_files_resolve_repository_link_components",
+          "requiredStatus": "engine-invariant",
+          "stage": "bounded-io",
+          "rationale": "Checkout-relative Git file lookup preserves contained links and bounds link traversal before language-specific analysis.",
+          "behaviorClass": "shared-engine-invariant"
+        },
+        {
+          "name": "changed_files_git_inputs_admit_only_the_selected_windows_checkout",
+          "requiredStatus": "engine-invariant",
+          "stage": "bounded-io",
+          "rationale": "Windows Git file lookup checks the configured path against the selected checkout before accessing a file.",
+          "behaviorClass": "shared-engine-invariant"
+        },
+        {
+          "name": "changed_files_read_through_a_contained_windows_junction",
+          "requiredStatus": "engine-invariant",
+          "stage": "bounded-io",
+          "rationale": "The Windows changed-file reader admits regular files through contained checkout junctions for every language adapter.",
+          "behaviorClass": "shared-engine-invariant"
+        },
+        {
           "name": "changed_files_read_git_long_path_setting",
           "requiredStatus": "engine-invariant",
           "stage": "session-plumbing",

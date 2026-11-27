@@ -10,9 +10,11 @@ use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
 use std::ffi::{OsStr, OsString};
 use std::fs::{self, File};
-use std::io::{BufRead, BufReader, Read};
+use std::io::{BufRead, BufReader, Read, Write};
 use std::path::{Path, PathBuf};
-use std::process::{Command, Stdio};
+use std::process::{ChildStdout, Command, ExitStatus, Stdio};
+
+mod git_input;
 
 // Snapshotting is additional disk work, separate from the analyzer's per-source read limits.
 const MAX_BASELINE_CHECKOUT_BYTES: u64 = 512 * 1024 * 1024;
@@ -166,8 +168,8 @@ struct ChangedGit {
 
 impl ChangedGit {
     /// Prepares a Git view with only the checkout settings needed to compare worktree paths.
-    fn new(root: &Path) -> Result<Self> {
-        let root = &canonical_platform_path(root)?;
+    fn new(requested_root: &Path) -> Result<Self> {
+        let root = &canonical_platform_path(requested_root)?;
         let scratch = tempfile::tempdir().context("cannot prepare changed-file comparison")?;
         let executable = git_executable(root)?;
         let metadata = || checkout_metadata_git(executable.as_os_str(), root, scratch.path());
@@ -215,29 +217,26 @@ impl ChangedGit {
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
             Err(error) => return Err(error).context("failed to snapshot the Git index"),
         }
-        // A non-boolean splitIndex value makes Git keep the saved index layout, as when unset.
-        let shared_index = checked_git_output(
-            metadata().env("GIT_INDEX_FILE", &snapshot).args([
-                "-c",
-                "core.splitIndex=keep",
-                "rev-parse",
-                "--shared-index-path",
-            ]),
-            "failed to locate the Git shared index",
-        )?;
-        if !shared_index.is_empty() {
-            // Older Git versions look for the linked index only under GIT_DIR.
-            let source = root.join(git_output_path(&shared_index)?);
-            let name = source
-                .file_name()
-                .context("invalid Git shared index path")?;
-            copy_git_index(&source, &git_directory.join(name))
-                .context("failed to preserve the Git shared index")?;
-        }
         for name in ["info/exclude", "info/attributes", "info/sparse-checkout"] {
             copy_git_info(&path(name)?, &git_directory.join(name))?;
         }
-        let settings = worktree_settings(executable.as_os_str(), root, scratch.path())?;
+        snapshot_shared_index(
+            executable.as_os_str(),
+            &index,
+            &git_directory,
+            &objects,
+            oid.len(),
+        )?;
+        #[cfg(windows)]
+        let alias = git_input::trusted_checkout_alias(requested_root, root, &repository);
+        #[cfg(not(windows))]
+        let alias: Option<PathBuf> = None;
+        let settings = worktree_settings(
+            executable.as_os_str(),
+            &repository,
+            alias.as_deref(),
+            scratch.path(),
+        )?;
         Ok(Self {
             scratch,
             executable,
@@ -300,36 +299,314 @@ impl ChangedGit {
     }
 }
 
-/// Reads allowlisted worktree settings using Git's normal configuration precedence.
-fn worktree_settings(executable: &OsStr, root: &Path, scratch: &Path) -> Result<Vec<OsString>> {
-    let output = checkout_metadata_git(executable, root, scratch)
-        .args(["config", "--null", "--get-regexp", r"^(core\.(filemode|symlinks|ignorecase|precomposeunicode|autocrlf|eol|safecrlf|excludesfile|attributesfile|checkstat|trustctime|sparsecheckout|sparsecheckoutcone|longpaths)|index\.sparse)$"])
-        .output().context("failed to read Git worktree settings")?;
-    // Git returns 1 without output when no selected settings exist.
-    if output.status.code() == Some(1) && output.stderr.is_empty() && output.stdout.is_empty() {
-        return Ok(Vec::new());
+/// Checks the private index and copies its one shared counterpart if requested by Git.
+fn snapshot_shared_index(
+    executable: &OsStr,
+    original_index: &Path,
+    directory: &Path,
+    objects: &Path,
+    oid_len: usize,
+) -> Result<()> {
+    let mut probe = isolated_git(executable, directory, directory);
+    probe
+        .env("GIT_DIR", ".")
+        .env("GIT_OBJECT_DIRECTORY", objects)
+        .env("LC_ALL", "C")
+        .args([
+            "-c",
+            "core.splitIndex=keep",
+            "rev-parse",
+            "--shared-index-path",
+        ]);
+    let mut inspect = || -> Result<_> {
+        let (_, status, stderr) = read_git_process(
+            &mut probe,
+            "failed to inspect the private Git index",
+            |mut stdout| Ok(std::io::copy(&mut stdout, &mut std::io::sink())?),
+        )?;
+        Ok((status, stderr))
+    };
+    let (status, stderr) = inspect()?;
+    if status.success() {
+        return Ok(());
     }
-    if !output.status.success() {
-        bail!("failed to read Git worktree settings");
+    // Git 2.31 and 2.54 first read the referenced shared index, even for this path query.
+    // Probe only in scratch, and use the diagnostic as a filename hint for a bounded copy.
+    let name = (status.code() == Some(128))
+        .then(|| shared_index_hint(&stderr, directory, oid_len))
+        .flatten()
+        .with_context(|| {
+            format!(
+                "failed to inspect the private Git index: {}",
+                String::from_utf8_lossy(&stderr).trim()
+            )
+        })?;
+    copy_git_index(&original_index.with_file_name(&name), &directory.join(name))
+        .context("failed to snapshot the Git shared index")?;
+    let (status, stderr) = inspect()?;
+    if !status.success() {
+        bail!(
+            "failed to inspect the private Git shared index: {}",
+            String::from_utf8_lossy(&stderr).trim()
+        );
     }
-    output
-        .stdout
-        .strip_suffix(b"\0")
-        .context("invalid Git worktree settings")?
-        .split(|byte| *byte == b'\0')
-        .map(|record| {
-            let mut setting = record.to_vec();
-            if let Some(separator) = setting.iter_mut().find(|byte| **byte == b'\n') {
-                *separator = b'=';
-            }
-            Ok(path_from_git_bytes(&setting)?.into_os_string())
-        })
-        .collect()
+    Ok(())
 }
 
-/// Copies a Git index and preserves its modification time for Git's stat comparisons.
+/// Extracts a single shared-index filename from Git's missing-file diagnostic in scratch.
+fn shared_index_hint(stderr: &[u8], directory: &Path, oid_len: usize) -> Option<OsString> {
+    const MARKER: &[u8] = b": index file open failed:";
+    let mut names = stderr.split(|byte| *byte == b'\n').filter_map(|line| {
+        let line = line.strip_prefix(b"fatal: ")?;
+        let end = line
+            .windows(MARKER.len())
+            .rposition(|part| part == MARKER)?;
+        let path = crate::config::normalize_platform_path(path_from_git_bytes(&line[..end]).ok()?);
+        let name = path.file_name()?;
+        let digest = name.to_str()?.strip_prefix("sharedindex.")?;
+        let in_scratch = directory.join(&path) == directory.join(name);
+        (in_scratch
+            && digest.len() == oid_len
+            && digest
+                .bytes()
+                .all(|byte| matches!(byte, b'0'..=b'9' | b'a'..=b'f')))
+        .then(|| name.to_owned())
+    });
+    let name = names.next()?;
+    names.next().is_none().then_some(name)
+}
+
+const GIT_FILE_SETTINGS: [&str; 2] = ["core.excludesfile", "core.attributesfile"];
+
+/// Captures comparison settings and scoped file selections in one bounded Git query.
+fn worktree_settings(
+    executable: &OsStr,
+    repository: &Path,
+    alias: Option<&Path>,
+    scratch: &Path,
+) -> Result<Vec<OsString>> {
+    const INVALID: &str = "invalid Git worktree settings";
+    let mut git = checkout_metadata_git(executable, repository, scratch);
+    git.args(["config", "--null", "--show-scope", "--get-regexp", r"^(core\.(filemode|symlinks|ignorecase|precomposeunicode|autocrlf|eol|safecrlf|checkstat|trustctime|sparsecheckout|sparsecheckoutcone|longpaths|excludesfile|attributesfile)|index\.sparse)$"]);
+    let Some(bytes) =
+        read_worktree_configuration(&mut git, "failed to read Git worktree settings")?
+    else {
+        return Ok(Vec::new());
+    };
+    let fields: Vec<_> = bytes
+        .strip_suffix(b"\0")
+        .context(INVALID)?
+        .split(|byte| *byte == 0)
+        .collect();
+    let (entries, incomplete) = fields.as_chunks::<2>();
+    if !incomplete.is_empty() {
+        bail!(INVALID);
+    }
+
+    let mut settings = Vec::new();
+    for &[_, record] in entries {
+        let separator = record.iter().position(|byte| *byte == b'\n');
+        let key = &record[..separator.unwrap_or(record.len())];
+        if GIT_FILE_SETTINGS
+            .iter()
+            .any(|setting| key == setting.as_bytes())
+        {
+            continue;
+        }
+        let mut setting = record.to_vec();
+        if let Some(separator) = separator {
+            setting[separator] = b'=';
+        }
+        settings.push(path_from_git_bytes(&setting)?.into_os_string());
+    }
+    snapshot_configured_git_inputs(
+        executable,
+        repository,
+        alias,
+        scratch,
+        entries,
+        &mut settings,
+    )?;
+    Ok(settings)
+}
+
+/// Collects bounded Git configuration output and distinguishes no value from a query failure.
+fn read_worktree_configuration(git: &mut Command, failure: &str) -> Result<Option<Vec<u8>>> {
+    const LIMIT: u64 = 256 * 1024;
+    let (stdout, status, stderr) = read_git_process(git, failure, |stdout| {
+        let mut bytes = Vec::new();
+        stdout.take(LIMIT + 1).read_to_end(&mut bytes)?;
+        if bytes.len() as u64 > LIMIT {
+            bail!("Git worktree settings exceed the 256 KiB limit");
+        }
+        Ok(bytes)
+    })?;
+    // Git returns 1 without output when no selected settings exist.
+    if status.code() == Some(1) && stderr.is_empty() && stdout.is_empty() {
+        return Ok(None);
+    }
+    if !status.success() {
+        bail!("{failure}");
+    }
+    Ok(Some(stdout))
+}
+
+/// Snapshots selected Git files, confining local and worktree settings to the checkout.
+fn snapshot_configured_git_inputs(
+    executable: &OsStr,
+    repository: &Path,
+    alias: Option<&Path>,
+    scratch: &Path,
+    entries: &[[&[u8]; 2]],
+    settings: &mut Vec<OsString>,
+) -> Result<()> {
+    for key in GIT_FILE_SETTINGS {
+        // Git prints matching records in read order. The last value for each key wins.
+        let Some((scope, value)) = entries.iter().rev().find_map(|&[scope, record]| {
+            let mut record = record.splitn(2, |byte| *byte == b'\n');
+            (record.next() == Some(key.as_bytes())).then(|| (scope, record.next()))
+        }) else {
+            continue;
+        };
+        let repository_owned = match scope {
+            b"local" | b"worktree" => true,
+            b"global" | b"system" => false,
+            _ => bail!("cannot verify the Git configuration scope for {key}"),
+        };
+        let value = value.with_context(|| format!("Git setting {key} needs a path"))?;
+        let (path, optional) = value
+            .strip_prefix(b":(optional)")
+            .map_or((value, false), |path| (path, true));
+        let path = expand_captured_git_path(executable, scratch, key, path)?;
+        let destination = scratch.join(key);
+        if git_input_is_disabled(&path) {
+            if !optional || !path.as_os_str().is_empty() {
+                settings.push(git_path_setting(key, &destination));
+            }
+            continue;
+        }
+        let source = configured_git_input_source(repository, &path)?;
+        let kind = format!("Git setting {key}");
+        let opened = if repository_owned {
+            git_input::open_repository_input(repository, alias, &source)
+        } else {
+            open_operator_git_input(&source)
+        }
+        .with_context(|| format!("failed to open {kind}"))?;
+        if let Some(opened) = opened {
+            let unanchored = (!repository_owned).then_some(source.as_path());
+            copy_bounded_git_metadata(unanchored, &destination, opened, &kind)?;
+        } else if optional {
+            continue; // An absent optional value leaves Git's implicit default active.
+        }
+        settings.push(git_path_setting(key, &destination));
+    }
+    Ok(())
+}
+
+/// Expands one captured raw value using Git's path interpolation without rereading configuration.
+fn expand_captured_git_path(
+    executable: &OsStr,
+    scratch: &Path,
+    key: &str,
+    raw: &[u8],
+) -> Result<PathBuf> {
+    let mut default = OsString::from("--default=");
+    // The caller removed the optional marker so Git cannot inspect the target during expansion.
+    if raw.starts_with(b":(optional)") {
+        default.push("./");
+    }
+    default.push(path_from_git_bytes(raw)?.as_os_str());
+    let mut git = isolated_git(executable, scratch, scratch);
+    git.args(["config", "--file"])
+        .arg(scratch.join("git/config"))
+        .args(["--null", "--path"])
+        .arg(default)
+        .args(["--get", key]);
+    let failure = format!("failed to resolve Git setting {key}");
+    let bytes = read_worktree_configuration(&mut git, &failure)?.context(failure.clone())?;
+    let path = bytes
+        .strip_suffix(b"\0")
+        .filter(|bytes| !bytes.contains(&0))
+        .context(failure)?;
+    path_from_git_bytes(path)
+}
+
+/// Opens a regular file selected by Git's system or operator configuration.
+fn open_operator_git_input(source: &Path) -> Result<Option<File>> {
+    match source.metadata() {
+        Ok(metadata) if metadata.is_file() => {
+            Ok(Some(crate::contained_read::open_nonblocking(source)?))
+        }
+        Ok(_) => bail!("must select a regular file of at most 1 MiB"),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(None),
+        Err(error) => Err(error.into()),
+    }
+}
+
+/// Recognizes explicit disabled Git file inputs without consulting a device.
+fn git_input_is_disabled(path: &Path) -> bool {
+    path.as_os_str().is_empty()
+        || path == Path::new("/dev/null")
+        || (cfg!(windows) && path.as_os_str().eq_ignore_ascii_case("NUL"))
+}
+
+/// Resolves a configured Git input relative to the worktree root before opening it.
+#[cfg(not(windows))]
+fn configured_git_input_source(repository: &Path, path: &Path) -> Result<PathBuf> {
+    Ok(repository.join(path))
+}
+
+/// Admits Windows disk and file-share paths before any filesystem operation.
+#[cfg(windows)]
+fn configured_git_input_source(repository: &Path, path: &Path) -> Result<PathBuf> {
+    use std::path::{Component, Prefix};
+
+    if !path.has_root() && matches!(path.components().next(), Some(Component::Prefix(_))) {
+        bail!("configured Git input must use a Windows filesystem path with a stable base");
+    }
+    let source = std::path::absolute(repository.join(path))?;
+    let supported = match source.components().next() {
+        Some(Component::Prefix(prefix)) => match prefix.kind() {
+            Prefix::Disk(_) | Prefix::VerbatimDisk(_) => true,
+            Prefix::UNC(_, share) | Prefix::VerbatimUNC(_, share) => {
+                !share.eq_ignore_ascii_case("pipe") && !share.eq_ignore_ascii_case("mailslot")
+            }
+            _ => false, // fail-closed: other namespaces do not identify ordinary filesystem paths
+        },
+        _ => false, // fail-closed: a Windows absolute source needs a disk or share prefix
+    };
+    if !supported || source.file_name().is_some_and(windows_git_device_name) {
+        bail!("configured Git input must use a Windows filesystem path");
+    }
+    Ok(source)
+}
+
+/// Identifies reserved DOS device basenames, including extension and stream spellings.
+#[cfg(windows)]
+fn windows_git_device_name(name: &OsStr) -> bool {
+    let name = name.to_string_lossy();
+    let basename = name
+        .split(['.', ':'])
+        .next()
+        .unwrap_or_default()
+        .trim_end_matches(' ')
+        .to_ascii_uppercase();
+    matches!(
+        basename.as_str(),
+        "CON" | "PRN" | "AUX" | "NUL" | "CONIN$" | "CONOUT$"
+    ) || ["COM", "LPT"].into_iter().any(|prefix| {
+        basename.strip_prefix(prefix).is_some_and(|suffix| {
+            matches!(suffix.as_bytes(), [b'1'..=b'9']) || matches!(suffix, "¹" | "²" | "³")
+        })
+    })
+}
+
+/// Copies a regular Git index of at most 64 MiB and preserves its modification time for stat comparisons.
 fn copy_git_index(source: &Path, destination: &Path) -> std::io::Result<()> {
-    let mut input = File::open(source)?;
+    const LIMIT: u64 = 64 * 1024 * 1024;
+    const LIMIT_ERROR: &str = "Git index exceeds the 64 MiB comparison limit";
+    let input = crate::contained_read::open_nonblocking(source)?;
     let metadata = input.metadata()?;
     if !metadata.is_file() {
         return Err(std::io::Error::new(
@@ -337,34 +614,88 @@ fn copy_git_index(source: &Path, destination: &Path) -> std::io::Result<()> {
             "Git index is not a regular file",
         ));
     }
-    let mut output = File::create(destination)?;
-    std::io::copy(&mut input, &mut output)?;
-    output.set_times(fs::FileTimes::new().set_modified(metadata.modified()?))
+    if metadata.len() > LIMIT {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidData,
+            LIMIT_ERROR,
+        ));
+    }
+    let parent = destination
+        .parent()
+        .ok_or(std::io::ErrorKind::InvalidInput)?;
+    let mut output = tempfile::NamedTempFile::new_in(parent)?;
+    copy_git_bytes(input, &mut output, LIMIT, LIMIT_ERROR)?;
+    output
+        .as_file()
+        .set_times(fs::FileTimes::new().set_modified(metadata.modified()?))?;
+    output
+        .persist(destination)
+        .map(|_| ())
+        .map_err(|error| error.error)
 }
 
 /// Copies a bounded Git metadata file into the private comparison directory.
 fn copy_git_info(source: &Path, destination: &Path) -> Result<()> {
-    const LIMIT: u64 = 1024 * 1024;
+    const KIND: &str = "Git comparison metadata";
     let metadata = match source.symlink_metadata() {
         Ok(metadata) => metadata,
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(()),
         Err(error) => return Err(error.into()),
     };
-    if !metadata.is_file() {
-        bail!("Git comparison metadata must be a regular file of at most 1 MiB");
+    let input = metadata
+        .is_file()
+        .then(|| crate::contained_read::open_nonblocking(source))
+        .transpose()?;
+    match input {
+        Some(input) if source.symlink_metadata()?.is_file() => {
+            copy_bounded_git_metadata(Some(source), destination, input, KIND)
+        }
+        _ => bail!("{KIND} must be a regular file of at most 1 MiB"),
+    }
+}
+
+/// Copies a verified regular Git metadata handle with a byte limit independent of its size hint.
+fn copy_bounded_git_metadata(
+    unanchored: Option<&Path>,
+    destination: &Path,
+    input: File,
+    kind: &str,
+) -> Result<()> {
+    const LIMIT: u64 = 1024 * 1024;
+    let opened = input.metadata()?;
+    let refusal = format!("{kind} must be a regular file of at most 1 MiB");
+    if !opened.is_file() || opened.len() > LIMIT {
+        bail!("{refusal}");
+    }
+    if let Some(source) = unanchored {
+        if !crate::contained_read::same_file_as(&input, source)? {
+            bail!("{refusal}");
+        }
     }
     let mut bytes = Vec::new();
-    File::open(source)?
-        .take(LIMIT + 1)
-        .read_to_end(&mut bytes)?;
-    if bytes.len() as u64 > LIMIT {
-        bail!("Git comparison metadata must be a regular file of at most 1 MiB");
-    }
+    copy_git_bytes(input, &mut bytes, LIMIT, &refusal)?;
     let directory = destination
         .parent()
         .context("missing Git metadata directory")?;
     fs::create_dir_all(directory)?;
     fs::write(destination, bytes)?;
+    Ok(())
+}
+
+/// Copies at most the Git input limit and checks that the input ended without writing excess bytes.
+fn copy_git_bytes(
+    mut input: impl Read,
+    mut output: impl Write,
+    limit: u64,
+    refusal: &str,
+) -> std::io::Result<()> {
+    std::io::copy(&mut input.by_ref().take(limit), &mut output)?;
+    if std::io::copy(&mut input.take(1), &mut std::io::sink())? != 0 {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidData,
+            refusal.to_owned(),
+        ));
+    }
     Ok(())
 }
 
@@ -563,8 +894,23 @@ fn git_paths(
     root: &Path,
     budget: &mut ChangedPathBudget,
 ) -> Result<Vec<PathBuf>> {
+    let (paths, status, stderr) = read_git_process(git.args(arguments), failure, |stdout| {
+        read_git_paths(BufReader::new(stdout), root, budget)
+    })?;
+    if !status.success() {
+        bail!("{failure}: {}", String::from_utf8_lossy(&stderr).trim());
+    }
+    Ok(paths)
+}
+
+/// Runs a Git query with a caller-supplied bounded stdout reader and capped diagnostic retention.
+/// Stops and reaps the process if stdout cannot be read completely.
+fn read_git_process<T>(
+    git: &mut Command,
+    failure: &str,
+    read_stdout: impl FnOnce(ChildStdout) -> Result<T>,
+) -> Result<(T, ExitStatus, Vec<u8>)> {
     let mut child = git
-        .args(arguments)
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
@@ -575,8 +921,8 @@ fn git_paths(
         let stderr = child.stderr.take().context("missing Git stderr")?;
         let diagnostics =
             std::thread::Builder::new().spawn(move || read_git_diagnostics(stderr))?;
-        let paths = read_git_paths(BufReader::new(stdout), root, budget);
-        if paths.is_err() {
+        let data = read_stdout(stdout);
+        if data.is_err() {
             let _ = child.kill();
         }
         let status = child.wait().with_context(|| failure.to_owned())?;
@@ -584,11 +930,7 @@ fn git_paths(
             .join()
             .ok()
             .context("Git diagnostic reader failed")??;
-        let paths = paths?;
-        if !status.success() {
-            bail!("{failure}: {}", String::from_utf8_lossy(&stderr).trim());
-        }
-        Ok(paths)
+        Ok((data?, status, stderr))
     })();
     if result.is_err() {
         let _ = child.kill();

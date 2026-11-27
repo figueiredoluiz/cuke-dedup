@@ -17,6 +17,11 @@ allow = [
 ]
 confidence-threshold = 0.8
 
+# Windows handle-relative Git input reads use winx through cap-primitives.
+[[licenses.exceptions]]
+crate = "winx@0.36.4"
+allow = ["Apache-2.0 WITH LLVM-exception"]
+
 [bans]
 multiple-versions = "warn"
 wildcards = "deny"
