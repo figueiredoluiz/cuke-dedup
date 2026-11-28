@@ -1,6 +1,15 @@
 # CukeDedup
 
 [![CI](https://github.com/figueiredoluiz/cuke-dedup/actions/workflows/ci.yml/badge.svg)](https://github.com/figueiredoluiz/cuke-dedup/actions/workflows/ci.yml)
+[![CodeQL](https://github.com/figueiredoluiz/cuke-dedup/actions/workflows/codeql.yml/badge.svg)](https://github.com/figueiredoluiz/cuke-dedup/actions/workflows/codeql.yml)
+[![Coverage](https://img.shields.io/codecov/c/github/figueiredoluiz/cuke-dedup/main)](https://app.codecov.io/gh/figueiredoluiz/cuke-dedup)
+[![crates.io](https://img.shields.io/crates/v/cuke-dedup)](https://crates.io/crates/cuke-dedup)
+[![Crate downloads](https://img.shields.io/crates/d/cuke-dedup?label=crate%20downloads)](https://crates.io/crates/cuke-dedup)
+[![npm](https://img.shields.io/npm/v/cuke-dedup)](https://www.npmjs.com/package/cuke-dedup)
+[![npm downloads](https://img.shields.io/npm/d18m/cuke-dedup?label=npm%20downloads)](https://www.npmjs.com/package/cuke-dedup)
+[![MSRV](https://img.shields.io/crates/msrv/cuke-dedup)](https://crates.io/crates/cuke-dedup)
+[![SLSA Build L2](https://slsa.dev/images/gh-badge-level2.svg)](https://github.com/figueiredoluiz/cuke-dedup#releases)
+[![Website](https://img.shields.io/badge/website-cukededup.dev-2EA44F)](https://cukededup.dev)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
 CukeDedup is a fast static analyzer for duplicate, ambiguous, reusable, and unused
@@ -63,7 +72,20 @@ cuke-dedup . --output reports/cuke-dedup
 `cuke-dedup check .` is equivalent to `cuke-dedup .`. The explicit `check` form requires a path;
 use `cuke-dedup ./check` to analyze a directory literally named `check`.
 
-## Framework support
+## Language and framework support
+
+Languages:
+![JavaScript](https://img.shields.io/badge/JavaScript-F7DF1E?logo=javascript&logoColor=black)
+![TypeScript](https://img.shields.io/badge/TypeScript-3178C6?logo=typescript&logoColor=white)
+[![Ruby (experimental)](https://img.shields.io/badge/Ruby-experimental-CC342D?logo=ruby&logoColor=white)](https://github.com/figueiredoluiz/cuke-dedup/blob/main/docs/discovery-and-frameworks.md#cucumber-ruby)
+
+Frameworks:
+![Cucumber.js](https://img.shields.io/badge/Cucumber.js-23D96C?logo=cucumber&logoColor=white)
+![Playwright-BDD](https://img.shields.io/badge/Playwright--BDD-2EAD33)
+![Cypress Cucumber](https://img.shields.io/badge/Cypress%20Cucumber-69D3A7?logo=cypress&logoColor=black)
+![Jest-Cucumber](https://img.shields.io/badge/Jest--Cucumber-C21325?logo=jest&logoColor=white)
+![Vitest Cucumber Plugin](https://img.shields.io/badge/Vitest%20Cucumber%20Plugin-6E9F18?logo=vitest&logoColor=white)
+![Cucumber-Ruby (experimental)](https://img.shields.io/badge/Cucumber--Ruby-experimental-CC342D?logo=cucumber&logoColor=white)
 
 | Workflow | Recognized registrations |
 | --- | --- |
@@ -179,6 +201,8 @@ Cucumber step definitions. The skill lives in
 and is distributed independently from the Cargo and npm packages.
 
 ## Documentation
+
+The [CukeDedup website](https://cukededup.dev) publishes these guides for the latest release.
 
 - [Configuration](https://github.com/figueiredoluiz/cuke-dedup/blob/main/docs/configuration.md)
 - [Discovery and frameworks](https://github.com/figueiredoluiz/cuke-dedup/blob/main/docs/discovery-and-frameworks.md)
