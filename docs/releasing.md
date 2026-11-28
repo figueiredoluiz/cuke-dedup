@@ -28,9 +28,11 @@ to the dispatched release and its tag, and `check-rust-toolchain.mjs --print pin
 pin against the MSRV but not the docs. Both read the Cargo files as TOML with Python 3.11 or later;
 TOML 1.1 syntax, which Cargo accepts, needs 3.15, and CI runs 3.15.
 
-### After publication
+### Action example pins
 
-After the release is published, resolve its tag to the full commit SHA with `git rev-parse 'vX.Y.Z^{commit}'`. Update the literal Action references in `README.md` and `docs/ci-and-baselines.md` to that SHA and put `# vX.Y.Z` on the same line. For a YAML block scalar, use `|-` or `>-` to strip the final line break and put the version comment on its header line. The examples refer to a published release throughout version preparation.
+Every release updates the Action example pins. Open the pin PR right after dispatching the release workflow from the pushed tag, and merge it once the release run succeeds.
+
+Resolve the tag to the full commit SHA with `git rev-parse 'vX.Y.Z^{commit}'`. Update the literal Action references in `README.md` and `docs/ci-and-baselines.md` to that SHA and put `# vX.Y.Z` on the same line. For a YAML block scalar, use `|-` or `>-` to strip the final line break and put the version comment on its header line. The examples refer to a published release throughout version preparation.
 
 Run `REQUIRE_ACTION_PIN_TAGS=true npm run check:versions` with the referenced release tags available locally. This checks that each annotation resolves to its recorded commit, as required by CI and the release metadata job. Commit the pin update separately from the version bump.
 
