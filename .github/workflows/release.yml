@@ -299,7 +299,8 @@ jobs:
          (needs.build-native.result == 'success' && needs.github-release.result == 'success'))
       }}
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    # Three registry-visibility phases of up to 10 minutes each, plus setup.
+    timeout-minutes: 45
     environment: npm
     permissions:
       contents: read
