@@ -30,7 +30,7 @@ TOML 1.1 syntax, which Cargo accepts, needs 3.15, and CI runs 3.15.
 
 ### Action example pins
 
-Every release updates the Action example pins. Open the pin PR right after dispatching the release workflow from the pushed tag, and merge it once the release run succeeds.
+Every release updates the Action example pins. Open the pin PR right after dispatching the release workflow from the pushed tag with `publish_release` set to `true`. Merge it only after that publishing run succeeds.
 
 Resolve the tag to the full commit SHA with `git rev-parse 'vX.Y.Z^{commit}'`. Update the literal Action references in `README.md` and `docs/ci-and-baselines.md` to that SHA and put `# vX.Y.Z` on the same line. For a YAML block scalar, use `|-` or `>-` to strip the final line break and put the version comment on its header line. The examples refer to a published release throughout version preparation.
 
